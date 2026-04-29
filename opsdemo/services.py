@@ -592,7 +592,7 @@ def _classify_shopify_error(exc: Exception) -> str:
     return "Unexpected sync error — check your credentials and try again."
 
 
-_ENCRYPTED_CONFIG_KEYS = {"access_token", "password", "token"}
+_ENCRYPTED_CONFIG_KEYS = {"access_token", "password", "token", "api_key"}
 
 
 def _get_fernet():
@@ -1098,35 +1098,26 @@ def create_invoice_from_renewal(renewal) -> Invoice:
     )
 
 
-def send_invoice_email(to_email: str, subject: str, html_body: str, smtp_config: dict) -> dict:
-    """Send an HTML email via SMTP.
-
-    Returns a dict with keys:
-      provider   – "host:port (TLS=...)" — safe to log, no credentials
-      refused    – list of addresses refused by the SMTP server (normally empty)
-
-    Raises ValueError with a user-safe message on any failure.
-    Credentials are never included in exception messages or return values.
-    """
+def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> dict:
+    """Send via smtplib. Raises ValueError on any failure."""
     import smtplib
     import socket
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
 
-    host = (smtp_config.get("host") or "").strip()
-    port = int(smtp_config.get("port") or 587)
-    username = (smtp_config.get("username") or "").strip()
-    password = (smtp_config.get("password") or "").strip()
-    from_addr = (smtp_config.get("from_addr") or username).strip()
-    use_tls = str(smtp_config.get("use_tls", "true")).lower() != "false"
+    host = (cfg.get("host") or "").strip()
+    port = int(cfg.get("port") or 587)
+    username = (cfg.get("username") or "").strip()
+    password = (cfg.get("password") or "").strip()
+    from_addr = (cfg.get("from_addr") or username).strip()
+    use_tls = str(cfg.get("use_tls", "true")).lower() != "false"
 
     if not host:
-        raise ValueError("SMTP host is not configured. Go to Settings → Email to set it up.")
+        raise ValueError("SMTP host is not configured. Go to Settings → Email.")
     if not from_addr:
         raise ValueError("SMTP 'From' address is not configured. Set it in Settings → Email.")
 
     provider_info = f"{host}:{port} (TLS={use_tls})"
-
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = from_addr
@@ -1143,54 +1134,162 @@ def send_invoice_email(to_email: str, subject: str, html_body: str, smtp_config:
                 smtp.login(username, password)
             refused = smtp.sendmail(from_addr, [to_email], msg.as_string())
     except smtplib.SMTPAuthenticationError:
-        raise ValueError(
-            "SMTP authentication failed — check username and password in Settings → Email."
-        )
+        raise ValueError("SMTP authentication failed — check username and password in Settings → Email.")
     except smtplib.SMTPSenderRefused:
         raise ValueError(
             f"SMTP server rejected the sender address '{from_addr}'. "
-            "Check the 'From address' field in Settings → Email — it must match your authenticated account."
-        )
+            "Check the 'From address' field in Settings → Email.")
     except smtplib.SMTPRecipientsRefused as exc:
-        bad = ", ".join(exc.recipients.keys())
-        raise ValueError(f"SMTP server refused delivery to recipient(s): {bad}")
+        raise ValueError(f"SMTP server refused delivery to: {', '.join(exc.recipients.keys())}")
     except smtplib.SMTPConnectError:
         raise ValueError(f"Could not connect to SMTP server {host}:{port}. Check host and port.")
     except smtplib.SMTPException as exc:
-        raise ValueError(f"SMTP protocol error ({type(exc).__name__}): {exc}") from exc
+        raise ValueError(f"SMTP error ({type(exc).__name__}): {exc}") from exc
     except (socket.gaierror, socket.timeout):
-        raise ValueError(
-            f"Network error reaching SMTP server '{host}:{port}' — "
-            "check the hostname and your internet connection."
-        )
+        raise ValueError(f"Network error reaching '{host}:{port}' — check hostname and connection.")
     except (OSError, TimeoutError) as exc:
-        raise ValueError(
-            f"Connection to SMTP server '{host}:{port}' failed ({type(exc).__name__})."
-        ) from exc
+        raise ValueError(f"Connection to '{host}:{port}' failed ({type(exc).__name__}).") from exc
 
-    # sendmail() returns a dict of {addr: (code, msg)} for addresses the server refused
-    # without raising SMTPRecipientsRefused (partial delivery failure).
     refused_addrs = list(refused.keys()) if refused else []
     if refused_addrs:
-        raise ValueError(
-            f"SMTP server accepted the message but refused delivery to: {', '.join(refused_addrs)}"
-        )
-
+        raise ValueError(f"SMTP accepted message but refused delivery to: {', '.join(refused_addrs)}")
     return {"provider": provider_info, "refused": refused_addrs}
 
 
-def send_test_email(to_email: str, smtp_config: dict) -> dict:
-    """Send a plain-text test email to verify end-to-end SMTP delivery.
-    Returns the same dict as send_invoice_email."""
-    from email.mime.text import MIMEText
-    body = MIMEText(
-        "This is a test email from OpsPilot Local.\n\n"
-        "If you received this, your SMTP configuration is working correctly.",
-        "plain", "utf-8",
+def _send_via_sendgrid(to_email: str, subject: str, html_body: str, cfg: dict) -> dict:
+    """Send via SendGrid Web API v3. Raises ValueError on failure."""
+    api_key = (cfg.get("api_key") or "").strip()
+    from_addr = (cfg.get("from_addr") or "").strip()
+    if not api_key:
+        raise ValueError("SendGrid API key is not configured. Go to Settings → Email.")
+    if not from_addr:
+        raise ValueError("'From' address is not configured. Set it in Settings → Email.")
+
+    payload = json.dumps({
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": from_addr},
+        "subject": subject,
+        "content": [{"type": "text/html", "value": html_body}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.sendgrid.com/v3/mail/send",
+        data=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
     )
-    from_addr = (smtp_config.get("from_addr") or smtp_config.get("username") or "").strip()
-    subject = "OpsPilot Local — SMTP test"
-    return send_invoice_email(to_email, subject, body.get_payload(), smtp_config)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status in (200, 202):
+                return {"provider": "SendGrid API", "refused": []}
+            raise ValueError(f"SendGrid returned unexpected status {resp.status}")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:300]
+        if exc.code == 401:
+            raise ValueError("SendGrid API key is invalid or expired.")
+        if exc.code == 403:
+            raise ValueError("SendGrid API key lacks 'Mail Send' permission.")
+        raise ValueError(f"SendGrid API error ({exc.code}): {body}")
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise ValueError(f"Could not reach SendGrid API: {exc}")
+
+
+def _send_via_resend(to_email: str, subject: str, html_body: str, cfg: dict) -> dict:
+    """Send via Resend API. Raises ValueError on failure."""
+    api_key = (cfg.get("api_key") or "").strip()
+    from_addr = (cfg.get("from_addr") or "").strip()
+    if not api_key:
+        raise ValueError("Resend API key is not configured. Go to Settings → Email.")
+    if not from_addr:
+        raise ValueError("'From' address is not configured. Set it in Settings → Email.")
+
+    payload = json.dumps({
+        "from": from_addr,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            return {"provider": "Resend API", "refused": []}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:300]
+        if exc.code == 401:
+            raise ValueError("Resend API key is invalid.")
+        if exc.code == 422:
+            raise ValueError(f"Resend rejected the request — verify your 'from' domain is set up in Resend: {body}")
+        raise ValueError(f"Resend API error ({exc.code}): {body}")
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise ValueError(f"Could not reach Resend API: {exc}")
+
+
+def send_invoice_email(to_email: str, subject: str, html_body: str, smtp_config: dict) -> dict:
+    """Send email via whichever provider is active in config.
+    Returns {"provider": str, "refused": []}. Raises ValueError on failure."""
+    provider = (smtp_config.get("provider") or "smtp").lower()
+    if provider == "sendgrid":
+        return _send_via_sendgrid(to_email, subject, html_body, smtp_config)
+    if provider == "resend":
+        return _send_via_resend(to_email, subject, html_body, smtp_config)
+    return _send_via_smtp(to_email, subject, html_body, smtp_config)
+
+
+def send_test_email(to_email: str, smtp_config: dict) -> dict:
+    """Send a test email using the active provider to verify end-to-end delivery."""
+    subject = "OpsPilot — Email delivery test"
+    body = (
+        "<p>This is a test email from <strong>OpsPilot Local</strong>.</p>"
+        "<p>If you received this, your email configuration is working correctly.</p>"
+    )
+    return send_invoice_email(to_email, subject, body, smtp_config)
+
+
+def test_api_connection(cfg: dict) -> dict:
+    """Verify an API-based email provider key without sending email.
+    Returns {"ok": True, "provider": str}. Raises ValueError on failure."""
+    provider = (cfg.get("provider") or "smtp").lower()
+    api_key = (cfg.get("api_key") or "").strip()
+    if not api_key:
+        raise ValueError("API key is not configured.")
+
+    if provider == "sendgrid":
+        req = urllib.request.Request(
+            "https://api.sendgrid.com/v3/scopes",
+            headers={"Authorization": f"Bearer {api_key}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10):
+                return {"ok": True, "provider": "SendGrid API"}
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                raise ValueError("SendGrid API key is invalid or expired.")
+            raise ValueError(f"SendGrid API error ({exc.code})")
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            raise ValueError(f"Could not reach SendGrid: {exc}")
+
+    if provider == "resend":
+        req = urllib.request.Request(
+            "https://api.resend.com/domains",
+            headers={"Authorization": f"Bearer {api_key}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10):
+                return {"ok": True, "provider": "Resend API"}
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                raise ValueError("Resend API key is invalid.")
+            raise ValueError(f"Resend API error ({exc.code})")
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            raise ValueError(f"Could not reach Resend: {exc}")
+
+    raise ValueError(f"Unknown provider '{provider}' — use sendgrid or resend.")
 
 
 # GitHub integration removed — use standard git tooling to push to GitHub.

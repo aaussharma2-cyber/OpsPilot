@@ -3,61 +3,144 @@
 <div class="page-head">
   <div>
     <h1>Email Settings</h1>
-    <div class="subtle">Configure SMTP to send invoices and notifications directly from OpsPilot.</div>
+    <div class="subtle">Configure how OpsPilot sends invoice emails and notifications.</div>
   </div>
   <a href="{{ url_for('main.settings') }}" class="btn small">← Back to Settings</a>
 </div>
 
+{% set active_provider = cfg.get('provider', 'smtp') %}
+
 <div class="two-col">
   <section class="panel">
-    <h2 style="margin-top:0">SMTP configuration</h2>
-    <form method="post" class="form-grid" data-disable-on-submit>
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" name="action" value="save">
 
-      <label style="grid-column:1/-1">
-        SMTP host
-        <input type="text" name="host" value="{{ cfg.get('host','') }}" placeholder="smtp.gmail.com or smtp.sendgrid.net">
-      </label>
-      <label>
-        Port
-        <input type="number" name="port" value="{{ cfg.get('port','587') }}" placeholder="587">
-      </label>
-      <label style="display:flex;align-items:center;gap:0.5rem;color:var(--text);margin-top:1.9rem;">
-        <input type="checkbox" name="use_tls" style="width:auto" {% if cfg.get('use_tls','true') != 'false' %}checked{% endif %}> Use STARTTLS
-      </label>
-      <label>
-        Username
-        <input type="text" name="username" value="{{ cfg.get('username','') }}" placeholder="your@email.com">
-      </label>
-      <label>
-        Password
-        <input type="password" name="password" placeholder="{{ 'Saved — leave blank to keep' if password_saved else 'Enter SMTP password' }}">
-      </label>
-      <label style="grid-column:1/-1">
-        From address
-        <input type="email" name="from_addr" value="{{ cfg.get('from_addr','') }}" placeholder="noreply@yourcompany.com">
-        <span class="subtle" style="font-size:0.82rem;margin-top:0.2rem">Displays as sender on outgoing invoices. Defaults to username if blank.</span>
-      </label>
+    {# ── Provider tabs ── #}
+    <div style="display:flex;gap:0;margin-bottom:1.5rem;border-bottom:2px solid var(--line)">
+      <button type="button" class="tab-btn {% if active_provider == 'smtp' %}active{% endif %}"
+              onclick="switchTab('smtp')" id="tab-btn-smtp"
+              style="padding:0.5rem 1.2rem;border:none;background:none;cursor:pointer;font-size:0.95rem;
+                     border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--text)">
+        SMTP
+      </button>
+      <button type="button" class="tab-btn {% if active_provider in ('sendgrid','resend') %}active{% endif %}"
+              onclick="switchTab('api')" id="tab-btn-api"
+              style="padding:0.5rem 1.2rem;border:none;background:none;cursor:pointer;font-size:0.95rem;
+                     border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--text)">
+        API <span class="subtle" style="font-size:0.8rem">(SendGrid / Resend)</span>
+      </button>
+    </div>
 
-      <button class="btn primary" type="submit">Save settings</button>
-    </form>
+    {# ── SMTP tab ── #}
+    <div id="panel-smtp" {% if active_provider not in ('smtp', '') and active_provider %}style="display:none"{% endif %}>
+      <h2 style="margin-top:0">SMTP configuration</h2>
+      <p class="subtle" style="font-size:0.88rem;margin:0 0 1rem">
+        Works with Gmail App Passwords, Outlook, SendGrid SMTP, etc.
+        Port 587 may be blocked on Render's free tier — use the API tab if emails time out.
+      </p>
+      <form method="post" class="form-grid" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="save">
+        <label style="grid-column:1/-1">
+          SMTP host
+          <input type="text" name="host" value="{{ cfg.get('host','') }}" placeholder="smtp.gmail.com">
+        </label>
+        <label>
+          Port
+          <input type="number" name="port" value="{{ cfg.get('port','587') }}" placeholder="587">
+        </label>
+        <label style="display:flex;align-items:center;gap:0.5rem;color:var(--text);margin-top:1.9rem">
+          <input type="checkbox" name="use_tls" style="width:auto"
+                 {% if cfg.get('use_tls','true') != 'false' %}checked{% endif %}> Use STARTTLS
+        </label>
+        <label>
+          Username
+          <input type="text" name="username" value="{{ cfg.get('username','') }}" placeholder="your@email.com">
+        </label>
+        <label>
+          Password
+          <input type="password" name="password"
+                 placeholder="{{ 'Saved — leave blank to keep' if password_saved else 'Enter SMTP password' }}">
+        </label>
+        <label style="grid-column:1/-1">
+          From address
+          <input type="email" name="from_addr" value="{{ cfg.get('from_addr','') }}"
+                 placeholder="noreply@yourcompany.com">
+          <span class="subtle" style="font-size:0.82rem;margin-top:0.2rem">
+            Defaults to username if blank.
+          </span>
+        </label>
+        <button class="btn primary" type="submit">Save SMTP settings</button>
+      </form>
 
-    {% if cfg.get('host') %}
-    <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
-    <h3 style="margin:0 0 0.75rem">Test connection</h3>
-    <p class="subtle" style="margin:0 0 0.75rem;font-size:0.9rem">Verify that OpsPilot can reach your SMTP server with the saved credentials (auth only — no email sent).</p>
-    <form method="post">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" name="action" value="test">
-      <button class="btn success" type="submit">Test SMTP connection</button>
-    </form>
+      {% if cfg.get('host') and active_provider == 'smtp' %}
+      <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
+      <h3 style="margin:0 0 0.5rem">Test SMTP connection</h3>
+      <p class="subtle" style="margin:0 0 0.75rem;font-size:0.88rem">Auth-only check — no email sent.</p>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="test">
+        <button class="btn success" type="submit">Test connection</button>
+      </form>
+      {% endif %}
+    </div>
 
+    {# ── API tab ── #}
+    <div id="panel-api" {% if active_provider not in ('sendgrid','resend') %}style="display:none"{% endif %}>
+      <h2 style="margin-top:0">API configuration</h2>
+      <p class="subtle" style="font-size:0.88rem;margin:0 0 1rem">
+        Bypasses SMTP entirely — works on Render's free tier.
+        <strong>SendGrid</strong> and <strong>Resend</strong> both offer free tiers (100–3,000 emails/month).
+      </p>
+      <form method="post" class="form-grid" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="save_api">
+        <label style="grid-column:1/-1">
+          Provider
+          <select name="api_provider">
+            <option value="sendgrid" {% if cfg.get('provider') == 'sendgrid' %}selected{% endif %}>
+              SendGrid (api.sendgrid.com)
+            </option>
+            <option value="resend" {% if cfg.get('provider') == 'resend' %}selected{% endif %}>
+              Resend (api.resend.com)
+            </option>
+          </select>
+        </label>
+        <label style="grid-column:1/-1">
+          API key
+          <input type="password" name="api_key"
+                 placeholder="{{ 'Saved — leave blank to keep' if api_key_saved else 'Paste API key here' }}">
+        </label>
+        <label style="grid-column:1/-1">
+          From address
+          <input type="email" name="api_from_addr" value="{{ cfg.get('from_addr','') }}"
+                 placeholder="noreply@yourcompany.com">
+          <span class="subtle" style="font-size:0.82rem;margin-top:0.2rem">
+            Must be a verified sender in your SendGrid / Resend account.
+          </span>
+        </label>
+        <button class="btn primary" type="submit">Save API settings</button>
+      </form>
+
+      {% if api_key_saved and active_provider in ('sendgrid', 'resend') %}
+      <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
+      <h3 style="margin:0 0 0.5rem">Verify API key</h3>
+      <p class="subtle" style="margin:0 0 0.75rem;font-size:0.88rem">Checks the key is valid — no email sent.</p>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="test_api">
+        <button class="btn success" type="submit">Verify API key</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {# ── Send test email (shown for whichever provider is active) ── #}
+    {% set ready = (active_provider == 'smtp' and cfg.get('host')) or
+                   (active_provider in ('sendgrid','resend') and api_key_saved) %}
+    {% if ready %}
     <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
     <h3 style="margin:0 0 0.25rem">Send test email</h3>
-    <p class="subtle" style="margin:0 0 0.75rem;font-size:0.9rem">
-      Send an actual email to verify end-to-end delivery. If you receive it, invoices will work.
-      If not, check spam and verify your SPF/DKIM records.
+    <p class="subtle" style="margin:0 0 0.75rem;font-size:0.88rem">
+      Sends a real email to confirm end-to-end delivery via
+      <strong>{{ active_provider.title() if active_provider != 'sendgrid' else 'SendGrid' }}</strong>.
     </p>
     <form method="post" class="form-grid" style="gap:0.75rem" data-disable-on-submit>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -69,43 +152,66 @@
       <button class="btn primary" type="submit">Send test email</button>
     </form>
     {% endif %}
+
   </section>
 
   <section class="panel">
-    <h2 style="margin-top:0">How it works</h2>
+    <h2 style="margin-top:0">Which should I use?</h2>
     <div style="display:grid;gap:1rem">
       <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
-        <span style="font-size:1.2rem">✉</span>
+        <span style="font-size:1.2rem">📡</span>
         <div>
-          <strong>Invoice emails</strong>
-          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
-            On the <a href="{{ url_for('main.renewals') }}">Renewals</a> page, click
-            <strong>Send Invoice</strong> next to any renewal to create an invoice and
-            optionally email it to the contact.
-          </p>
-        </div>
-      </div>
-      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
-        <span style="font-size:1.2rem">🔒</span>
-        <div>
-          <strong>Secure storage</strong>
-          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
-            Your SMTP password is encrypted at rest using the same key as integration
-            credentials. Never stored in plain text.
+          <strong>SMTP</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.88rem">
+            Works locally and on paid Render plans. Free tier Render blocks ports 465/587
+            so you'll get "Network unreachable" errors there.
           </p>
         </div>
       </div>
       <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
         <span style="font-size:1.2rem">⚡</span>
         <div>
-          <strong>Common providers</strong>
-          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
-            Works with Gmail (use an App Password), Outlook, SendGrid, Mailgun,
-            Postmark, or any SMTP relay. Port 587 + STARTTLS is recommended.
+          <strong>SendGrid API</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.88rem">
+            Free: 100 emails/day. Sign up at sendgrid.com → API Keys → create key with
+            "Mail Send" permission. Username for SMTP relay is literally <code>apikey</code>.
+          </p>
+        </div>
+      </div>
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">✉</span>
+        <div>
+          <strong>Resend API</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.88rem">
+            Free: 3,000 emails/month. Sign up at resend.com → add &amp; verify your domain →
+            create API key. From address must use your verified domain.
+          </p>
+        </div>
+      </div>
+      <div class="alert-item warning" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">🔒</span>
+        <div>
+          <strong>Credentials stored encrypted</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.88rem">
+            Both SMTP passwords and API keys are encrypted at rest with your
+            CREDENTIAL_ENCRYPTION_KEY.
           </p>
         </div>
       </div>
     </div>
   </section>
 </div>
+
+<script>
+function switchTab(tab) {
+  document.getElementById('panel-smtp').style.display = tab === 'smtp' ? '' : 'none';
+  document.getElementById('panel-api').style.display  = tab === 'api'  ? '' : 'none';
+  document.getElementById('tab-btn-smtp').style.borderBottomColor = tab === 'smtp' ? 'var(--accent, #3b82f6)' : 'transparent';
+  document.getElementById('tab-btn-api').style.borderBottomColor  = tab === 'api'  ? 'var(--accent, #3b82f6)' : 'transparent';
+  document.getElementById('tab-btn-smtp').style.fontWeight = tab === 'smtp' ? '600' : 'normal';
+  document.getElementById('tab-btn-api').style.fontWeight  = tab === 'api'  ? '600' : 'normal';
+}
+// Highlight the active tab on load
+switchTab('{{ "api" if active_provider in ("sendgrid","resend") else "smtp" }}');
+</script>
 {% endblock %}

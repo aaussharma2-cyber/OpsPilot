@@ -64,6 +64,7 @@ from .services import (
     seed_demo_data,
     send_invoice_email,
     send_test_email,
+    test_api_connection,
     set_integration_config,
     slugify,
     sync_shopify_customers,
@@ -1820,19 +1821,34 @@ def settings_email():
     if request.method == "POST":
         verify_csrf()
         action = request.form.get("action", "save")
+
         if action == "save":
             data: dict = {
-                "host":       request.form.get("host", "").strip(),
-                "port":       request.form.get("port", "587").strip() or "587",
-                "username":   request.form.get("username", "").strip(),
-                "from_addr":  request.form.get("from_addr", "").strip(),
-                "use_tls":    "true" if request.form.get("use_tls") else "false",
+                "provider":  "smtp",
+                "host":      request.form.get("host", "").strip(),
+                "port":      request.form.get("port", "587").strip() or "587",
+                "username":  request.form.get("username", "").strip(),
+                "from_addr": request.form.get("from_addr", "").strip(),
+                "use_tls":   "true" if request.form.get("use_tls") else "false",
             }
             new_password = request.form.get("password", "").strip()
             if new_password:
                 data["password"] = new_password
             set_integration_config("smtp", data)
-            flash("Email settings saved.", "success")
+            flash("SMTP settings saved.", "success")
+
+        elif action == "save_api":
+            provider = request.form.get("api_provider", "sendgrid").strip()
+            data: dict = {
+                "provider":  provider,
+                "from_addr": request.form.get("api_from_addr", "").strip(),
+            }
+            new_key = request.form.get("api_key", "").strip()
+            if new_key:
+                data["api_key"] = new_key
+            set_integration_config("smtp", data)
+            flash(f"{provider.title()} API settings saved.", "success")
+
         elif action == "test":
             if not cfg.get("host"):
                 flash("Save SMTP settings first.", "warning")
@@ -1842,56 +1858,62 @@ def settings_email():
                     host = cfg.get("host", "")
                     port = int(cfg.get("port") or 587)
                     use_tls = str(cfg.get("use_tls", "true")).lower() != "false"
-                    username = cfg.get("username", "")
-                    password = cfg.get("password", "")
                     with smtplib.SMTP(host, port, timeout=10) as smtp:
                         smtp.ehlo()
                         if use_tls:
                             smtp.starttls()
                             smtp.ehlo()
-                        if username and password:
-                            smtp.login(username, password)
+                        u, p = cfg.get("username", ""), cfg.get("password", "")
+                        if u and p:
+                            smtp.login(u, p)
                     log_audit("smtp_test_connection", "settings", status="ok",
                               message=f"SMTP connection test passed. Host: {host}:{port} (TLS={use_tls})")
                     flash("SMTP connection successful.", "success")
                 except Exception as exc:
                     log_audit("smtp_test_connection", "settings", status="error",
-                              message=f"SMTP connection test failed. Host: {cfg.get('host')}:{cfg.get('port')}. Error: {exc}")
+                              message=f"SMTP connection test failed. {exc}")
                     flash(f"SMTP connection failed: {exc}", "danger")
+
+        elif action == "test_api":
+            try:
+                result = test_api_connection(cfg)
+                log_audit("api_test_connection", "settings", status="ok",
+                          message=f"{result['provider']} key verified successfully.")
+                flash(f"{result['provider']} API key is valid.", "success")
+            except ValueError as exc:
+                log_audit("api_test_connection", "settings", status="error", message=str(exc))
+                flash(f"API key check failed: {exc}", "danger")
+
         elif action == "send_test":
             to_email = request.form.get("test_recipient", "").strip()
+            provider = cfg.get("provider", "smtp")
             if not to_email:
-                flash("Enter a recipient email address to send the test to.", "warning")
-            elif not cfg.get("host"):
+                flash("Enter a recipient email address.", "warning")
+            elif provider == "smtp" and not cfg.get("host"):
                 flash("Save SMTP settings first.", "warning")
+            elif provider in ("sendgrid", "resend") and not cfg.get("api_key"):
+                flash("Save API settings first.", "warning")
             else:
                 try:
                     result = send_test_email(to_email, cfg)
-                    log_audit("smtp_test_send", "settings", status="ok",
-                              message=(
-                                  f"Test email submitted to SMTP for delivery to {to_email}. "
-                                  f"Provider: {result.get('provider', 'unknown')}. "
-                                  "Note: SMTP acceptance does not guarantee inbox delivery — "
-                                  "check spam folder and verify SPF/DKIM if not received."
-                              ))
-                    flash(
-                        f"Test email submitted to SMTP for {to_email}. "
-                        "Check your inbox (and spam folder) — delivery may take a minute.",
-                        "success",
-                    )
+                    log_audit("email_test_send", "settings", status="ok",
+                              message=(f"Test email sent via {result.get('provider')} to {to_email}. "
+                                       "SMTP acceptance does not guarantee inbox delivery."))
+                    flash(f"Test email sent to {to_email} via {result.get('provider')}. "
+                          "Check inbox and spam folder.", "success")
                 except ValueError as exc:
-                    log_audit("smtp_test_send", "settings", status="error",
-                              message=f"Test email failed for {to_email}. "
-                                      f"SMTP host: {cfg.get('host')}:{cfg.get('port')}. Error: {exc}")
+                    log_audit("email_test_send", "settings", status="error", message=str(exc))
                     flash(f"Test email failed: {exc}", "danger")
+
         return redirect(url_for("main.settings_email"))
 
-    public_cfg = {k: v for k, v in cfg.items() if k != "password"}
+    public_cfg = {k: v for k, v in cfg.items() if k not in ("password", "api_key")}
     return render_template(
         "settings_email.html",
         title="Email Settings",
         cfg=public_cfg,
         password_saved=bool(cfg.get("password")),
+        api_key_saved=bool(cfg.get("api_key")),
     )
 
 
