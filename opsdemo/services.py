@@ -1283,6 +1283,9 @@ def test_api_connection(cfg: dict) -> dict:
             with urllib.request.urlopen(req, timeout=10):
                 return {"ok": True, "provider": "Resend API"}
         except urllib.error.HTTPError as exc:
+            if exc.code in (200, 403):
+                # 403 = valid key but scoped without domain-list permission — still usable for sending
+                return {"ok": True, "provider": "Resend API"}
             if exc.code == 401:
                 raise ValueError("Resend API key is invalid.")
             raise ValueError(f"Resend API error ({exc.code})")
