@@ -1219,6 +1219,12 @@ def _send_via_resend(to_email: str, subject: str, html_body: str, cfg: dict) -> 
             return {"provider": "Resend API", "refused": []}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:300]
+        if "error code: 1010" in body or "Cloudflare" in body:
+            raise ValueError(
+                "Resend is blocked from this server's IP (Cloudflare error 1010). "
+                "Render's free-tier IPs are banned by Resend's CDN. Use SendGrid instead — "
+                "it works on Render's free tier."
+            )
         if exc.code == 401:
             raise ValueError("Resend API key is invalid.")
         if exc.code == 422:
@@ -1283,12 +1289,19 @@ def test_api_connection(cfg: dict) -> dict:
             with urllib.request.urlopen(req, timeout=10):
                 return {"ok": True, "provider": "Resend API"}
         except urllib.error.HTTPError as exc:
-            if exc.code in (200, 403):
-                # 403 = valid key but scoped without domain-list permission — still usable for sending
+            body = exc.read().decode("utf-8", errors="replace")
+            if "error code: 1010" in body or "Cloudflare" in body:
+                raise ValueError(
+                    "Resend is blocked from this server's IP (Cloudflare error 1010). "
+                    "Render's free-tier IPs are banned by Resend's CDN. "
+                    "Switch to SendGrid, which works on Render's free tier."
+                )
+            if exc.code == 403:
+                # Scoped key without domain-list permission — still valid for sending
                 return {"ok": True, "provider": "Resend API"}
             if exc.code == 401:
                 raise ValueError("Resend API key is invalid.")
-            raise ValueError(f"Resend API error ({exc.code})")
+            raise ValueError(f"Resend API error ({exc.code}): {body[:200]}")
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             raise ValueError(f"Could not reach Resend: {exc}")
 
