@@ -42,7 +42,8 @@ class Config:
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": 280,
-        **({"pool_size": 3, "max_overflow": 2} if _IS_PROD else {}),
+        **({"pool_size": 3, "max_overflow": 2,
+            "connect_args": {"sslmode": "require"}} if _IS_PROD else {}),
     }
 
     # ── Cookies / session ─────────────────────────────────────────────────────
