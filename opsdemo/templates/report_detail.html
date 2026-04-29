@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% block content %}
+
+{%- set is_money = report.metric in ['sum_revenue','sum_cost','sum_margin','sum_amount','sum_value','sum_cost'] -%}
+
+<div class="page-head">
+  <div>
+    <h1>{{ report.title }}</h1>
+    <div class="subtle">
+      {{ REPORT_ENTITIES[report.entity].label if report.entity in REPORT_ENTITIES else report.entity }}
+      {% if group_label %} · Grouped by {{ group_label }}{% endif %}
+      · {{ metric_label }}
+      · {{ data | length }} rows
+    </div>
+  </div>
+  <div class="actions">
+    <a href="{{ url_for('main.reports') }}" class="btn">← Reports</a>
+    <a href="{{ url_for('main.report_export', rid=report.id) }}" class="btn">Export CSV</a>
+    <a href="{{ url_for('main.report_export_pdf', rid=report.id) }}" class="btn">Export PDF</a>
+    <form method="post" action="{{ url_for('main.report_pin', rid=report.id) }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn success" type="submit">📌 Pin to Dashboard</button>
+    </form>
+    <form method="post" action="{{ url_for('main.report_delete', rid=report.id) }}" class="inline"
+          onsubmit="return confirm('Delete this report?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn danger" type="submit">Delete</button>
+    </form>
+  </div>
+</div>
+
+{% if data %}
+
+{# ── Bar chart ──────────────────────────────────────────────────────────── #}
+{% if report.chart_type == 'bar' %}
+<section class="panel" style="margin-bottom:1rem; overflow-x:auto;">
+  <h2 style="margin-top:0;">{{ metric_label }}{% if group_label %} by {{ group_label }}{% endif %}</h2>
+  {% set max_val = data | map(attribute='value') | max %}
+  <div class="bar-chart report-bar-chart">
+    {% for row in data %}
+    {% set pct = 0 if max_val == 0 else ((row.value / max_val) * 100) | round(1) %}
+    <div class="bar-row">
+      <div class="bar-label" title="{{ row.label }}">{{ row.label }}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:{{ pct }}%;"></div>
+      </div>
+      <div class="bar-value">
+        {% if is_money %}{{ row.value | fmt_money }}{% else %}{{ row.value | fmt_num }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{# ── Data table ─────────────────────────────────────────────────────────── #}
+<section class="panel">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+    <h2 style="margin:0;">Data table</h2>
+    <span class="subtle" style="font-size:0.85rem;">{{ data | length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th>{{ group_label or 'Group' }}</th>
+          <th class="num-col">{{ metric_label }}</th>
+          {% if data | length > 1 %}<th class="num-col">% of total</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% set total = data | map(attribute='value') | sum %}
+        {% for row in data %}
+        <tr>
+          <td>{{ row.label }}</td>
+          <td class="num-col">
+            {% if is_money %}{{ row.value | fmt_money }}{% else %}{{ row.value | fmt_num }}{% endif %}
+          </td>
+          {% if data | length > 1 %}
+          <td class="num-col subtle">
+            {{ 0 if total == 0 else ((row.value / total) * 100) | round(1) }}%
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td><strong>Total</strong></td>
+          <td class="num-col">
+            <strong>{% if is_money %}{{ total | fmt_money }}{% else %}{{ total | fmt_num }}{% endif %}</strong>
+          </td>
+          {% if data | length > 1 %}<td class="num-col subtle">100%</td>{% endif %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</section>
+
+{% else %}
+<section class="panel">
+  <p class="subtle" style="text-align:center; padding:2rem 0;">
+    No data yet for this report. Load demo data from the Dashboard, or adjust the report settings.
+  </p>
+</section>
+{% endif %}
+{% endblock %}

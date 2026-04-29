@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Integrations</h1>
+    <div class="subtle">Connect external platforms to sync data automatically.</div>
+  </div>
+  <div class="actions">
+    <a href="{{ url_for('main.settings') }}" class="btn">← Settings</a>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+
+  <div class="panel integration-card">
+    <div class="integration-logo shopify-logo">S</div>
+    <div class="integration-info">
+      <div class="integration-name">Shopify</div>
+      <div class="subtle" style="font-size:0.85rem;">Sync customers → CRM, orders → Sales &amp; Invoices</div>
+    </div>
+    <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.75rem;">
+      <span class="badge {{ 'success' if shopify_connected else 'warning' }}">
+        {{ 'Connected' if shopify_connected else 'Not configured' }}
+      </span>
+      <a href="{{ url_for('main.settings_integrations_shopify') }}" class="btn small">Configure</a>
+    </div>
+  </div>
+
+</div>
+
+{% if recent_logs %}
+<section class="panel">
+  <h2 style="margin-top:0;">Recent sync activity</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Integration</th><th>Entity</th><th>Records</th><th>Status</th><th>When</th></tr>
+      </thead>
+      <tbody>
+        {% for log in recent_logs %}
+        <tr>
+          <td>{{ log.integration | capitalize }}</td>
+          <td>{{ log.entity }}</td>
+          <td>{{ log.synced_count }}</td>
+          <td><span class="badge {{ 'success' if log.status == 'ok' else 'danger' }}">{{ log.status }}</span></td>
+          <td class="subtle">{{ log.synced_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<section class="panel">
+  <div class="subtle">No sync activity yet. Configure an integration above and run a sync.</div>
+</section>
+{% endif %}
+{% endblock %}

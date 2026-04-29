@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Audit Log</h1>
+    <div class="subtle">Full trail of logins, data changes, exports, email sends, and integration events.</div>
+  </div>
+  <div class="actions">
+    <a href="{{ url_for('main.settings') }}" class="btn">← Settings</a>
+  </div>
+</div>
+
+{# Filters #}
+<form method="get" action="{{ url_for('main.audit_log') }}" style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1.25rem; align-items:flex-end;">
+  <div>
+    <label style="display:block; font-size:0.82rem; margin-bottom:0.25rem; color:var(--muted);">Module</label>
+    <select name="module" style="padding:0.35rem 0.5rem; font-size:0.9rem; border:1px solid var(--line); border-radius:6px; background:var(--panel-2); color:var(--text);">
+      <option value="">All modules</option>
+      {% for m in modules %}
+      <option value="{{ m }}" {% if module_filter == m %}selected{% endif %}>{{ m | title }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:0.82rem; margin-bottom:0.25rem; color:var(--muted);">Status</label>
+    <select name="status" style="padding:0.35rem 0.5rem; font-size:0.9rem; border:1px solid var(--line); border-radius:6px; background:var(--panel-2); color:var(--text);">
+      <option value="">All statuses</option>
+      <option value="ok" {% if status_filter == 'ok' %}selected{% endif %}>OK</option>
+      <option value="error" {% if status_filter == 'error' %}selected{% endif %}>Error</option>
+      <option value="warning" {% if status_filter == 'warning' %}selected{% endif %}>Warning</option>
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:0.82rem; margin-bottom:0.25rem; color:var(--muted);">User</label>
+    <select name="user" style="padding:0.35rem 0.5rem; font-size:0.9rem; border:1px solid var(--line); border-radius:6px; background:var(--panel-2); color:var(--text);">
+      <option value="">All users</option>
+      {% for u in users %}
+      <option value="{{ u }}" {% if user_filter == u %}selected{% endif %}>{{ u }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button class="btn" type="submit">Filter</button>
+  {% if module_filter or status_filter or user_filter %}
+  <a href="{{ url_for('main.audit_log') }}" class="btn">Clear</a>
+  {% endif %}
+</form>
+
+<div class="subtle" style="font-size:0.82rem; margin-bottom:0.75rem;">
+  {{ total }} entr{{ 'ies' if total != 1 else 'y' }} found
+  {% if total > per_page %} — showing page {{ page }} of {{ ((total - 1) // per_page) + 1 }}{% endif %}
+</div>
+
+{% if entries %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>User</th>
+        <th>Module</th>
+        <th>Action</th>
+        <th>Status</th>
+        <th>Record</th>
+        <th>Message</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr>
+        <td class="subtle" style="font-size:0.82rem; white-space:nowrap;">{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td style="font-size:0.85rem;">{{ entry.user or '—' }}</td>
+        <td><span class="badge info" style="font-size:0.78rem;">{{ entry.module }}</span></td>
+        <td style="font-size:0.85rem;">{{ entry.action }}</td>
+        <td>
+          {% if entry.status == 'ok' %}
+          <span class="badge success">ok</span>
+          {% elif entry.status == 'error' %}
+          <span class="badge danger">error</span>
+          {% else %}
+          <span class="badge warning">{{ entry.status }}</span>
+          {% endif %}
+        </td>
+        <td class="subtle" style="font-size:0.82rem;">{{ entry.related_record or '—' }}</td>
+        <td class="subtle" style="font-size:0.82rem; max-width:360px; word-break:break-word;">{{ entry.message or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# Pagination #}
+{% if total > per_page %}
+<div style="display:flex; gap:0.5rem; justify-content:center; margin-top:1rem;">
+  {% if page > 1 %}
+  <a href="{{ url_for('main.audit_log', page=page-1, module=module_filter, status=status_filter, user=user_filter) }}" class="btn small">← Prev</a>
+  {% endif %}
+  <span class="subtle" style="line-height:2rem;">Page {{ page }} / {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}
+  <a href="{{ url_for('main.audit_log', page=page+1, module=module_filter, status=status_filter, user=user_filter) }}" class="btn small">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="panel" style="text-align:center; padding:2.5rem 1rem; color:var(--muted);">
+  <div style="font-size:2rem; margin-bottom:0.5rem;">📋</div>
+  <div>No audit log entries yet{% if module_filter or status_filter or user_filter %} matching these filters{% endif %}.</div>
+  <div class="subtle" style="margin-top:0.25rem; font-size:0.85rem;">
+    Events are logged automatically as you use the app — logins, record changes, exports, emails, and integrations.
+  </div>
+</div>
+{% endif %}
+{% endblock %}

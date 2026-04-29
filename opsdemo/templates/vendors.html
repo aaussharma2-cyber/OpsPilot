@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Vendors</h1><div class="subtle">Track suppliers, logistics partners, and contract renewals.</div></div>
+</div>
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top: 0;">New vendor</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Name<input type="text" name="name" required></label>
+      <label>Category<input type="text" name="category"></label>
+      <label>Contact name<input type="text" name="contact_name"></label>
+      <label>Email<input type="email" name="email"></label>
+      <label>Phone<input type="text" name="phone"></label>
+      <label>Contract end<input type="date" name="contract_end"></label>
+      <label>Rating (1-5)<input type="number" name="rating" min="1" max="5" value="3"></label>
+      <label style="grid-column: 1 / -1;">Notes<textarea name="notes"></textarea></label>
+      {{ cf_inputs(field_defs) }}
+      <button class="btn primary" type="submit">Create vendor</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2 style="margin-top: 0;">Vendor register</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Vendor</th><th>Category</th><th>Contact</th><th>Contract end</th><th>Rating</th><th></th></tr></thead>
+        <tbody>
+          {% for vendor in vendors %}
+          {% set vv = fv_map.get(vendor.id, {}) %}
+          <tr>
+            <td>
+              <strong>{{ vendor.name }}</strong>
+              {% if vendor.notes %}<div class="subtle">{{ vendor.notes }}</div>{% endif %}
+              {{ cf_display(field_defs, vv) }}
+            </td>
+            <td>{{ vendor.category or '—' }}</td>
+            <td>
+              <div>{{ vendor.contact_name or '—' }}</div>
+              <div class="subtle">{{ vendor.email or '' }} {{ vendor.phone or '' }}</div>
+            </td>
+            <td>{{ vendor.contract_end or '—' }}</td>
+            <td>{{ vendor.rating }}/5</td>
+            <td>
+              <form method="post" action="{{ url_for('main.vendor_delete', vendor_id=vendor.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="subtle">No vendors yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

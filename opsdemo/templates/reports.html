@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Reports</h1>
+    <div class="subtle">Build and save custom data visualisations from any entity.</div>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns: 1fr 1.4fr; gap: 1.5rem; align-items: start;">
+
+  {# ── Create report form ─────────────────────────────────────────────────── #}
+  <section class="panel">
+    <h2 style="margin-top:0;">New Report</h2>
+    <form method="post" action="{{ url_for('main.report_create') }}" id="report-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="field-row">
+        <label for="r-title">Title</label>
+        <input id="r-title" name="title" type="text" placeholder="e.g. Revenue by channel" required>
+      </div>
+
+      <div class="field-row">
+        <label for="r-entity">Data source</label>
+        <select id="r-entity" name="entity" required>
+          <option value="">— choose —</option>
+          {% for key, meta in REPORT_ENTITIES.items() %}
+          <option value="{{ key }}">{{ meta.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field-row">
+        <label for="r-group">Group by</label>
+        <select id="r-group" name="group_by">
+          <option value="">— select data source first —</option>
+        </select>
+      </div>
+
+      <div class="field-row">
+        <label for="r-metric">Metric</label>
+        <select id="r-metric" name="metric">
+          <option value="count">Count</option>
+        </select>
+      </div>
+
+      <div class="field-row">
+        <label for="r-chart">Visualisation</label>
+        <select id="r-chart" name="chart_type">
+          <option value="bar">Bar chart</option>
+          <option value="table">Table</option>
+        </select>
+      </div>
+
+      <button class="btn success" type="submit" style="margin-top:0.5rem; width:100%;">Create report</button>
+    </form>
+  </section>
+
+  {# ── Saved reports list ─────────────────────────────────────────────────── #}
+  <section class="panel">
+    <h2 style="margin-top:0;">Saved Reports <span class="badge info">{{ reports | length }}</span></h2>
+    {% if reports %}
+    <div class="report-list">
+      {% for r in reports %}
+      <div class="report-list-item">
+        <div class="report-list-meta">
+          <a href="{{ url_for('main.report_detail', rid=r.id) }}" class="report-title">{{ r.title }}</a>
+          <div class="subtle" style="font-size:0.85rem; margin-top:0.2rem;">
+            {{ REPORT_ENTITIES[r.entity].label if r.entity in REPORT_ENTITIES else r.entity }}
+            {% if r.group_by %} · grouped by {{ r.group_by }}{% endif %}
+            · {{ r.metric }}
+            · {{ r.chart_type }}
+          </div>
+        </div>
+        <div class="report-list-actions">
+          <a href="{{ url_for('main.report_detail', rid=r.id) }}" class="btn small">View</a>
+          <form method="post" action="{{ url_for('main.report_delete', rid=r.id) }}" class="inline"
+                onsubmit="return confirm('Delete this report?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn small danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="subtle">No reports yet. Create one using the form on the left.</div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+(function () {
+  const entityMeta = {{ REPORT_ENTITIES | tojson }};
+  const entitySel  = document.getElementById('r-entity');
+  const groupSel   = document.getElementById('r-group');
+  const metricSel  = document.getElementById('r-metric');
+
+  function updateSelects(entity) {
+    const meta = entityMeta[entity];
+    groupSel.innerHTML  = '';
+    metricSel.innerHTML = '';
+    if (!meta) {
+      groupSel.innerHTML  = '<option value="">— select data source first —</option>';
+      metricSel.innerHTML = '<option value="count">Count</option>';
+      return;
+    }
+    meta.groups.forEach(([key, label]) => {
+      const o = document.createElement('option');
+      o.value = key; o.textContent = label;
+      groupSel.appendChild(o);
+    });
+    meta.metrics.forEach(([key, label]) => {
+      const o = document.createElement('option');
+      o.value = key; o.textContent = label;
+      metricSel.appendChild(o);
+    });
+  }
+
+  entitySel.addEventListener('change', () => updateSelects(entitySel.value));
+  if (entitySel.value) updateSelects(entitySel.value);
+})();
+</script>
+{% endblock %}

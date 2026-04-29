@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Sprint Management</h1>
+    <div class="subtle">View all sprints, track velocity, and review completed history.</div>
+  </div>
+  <a href="{{ url_for('main.tasks') }}" class="btn small">← Tasks Board</a>
+</div>
+
+{% set active = sprints | selectattr('status', 'eq', 'Active') | list %}
+{% set planning = sprints | selectattr('status', 'eq', 'Planning') | list %}
+{% set completed = sprints | selectattr('status', 'eq', 'Completed') | list %}
+
+{# ── Summary cards ──────────────────────────────────────────────── #}
+<div class="grid metrics" style="margin-bottom:1.2rem">
+  <div class="card">
+    <div class="subtle">Total sprints</div>
+    <div class="metric-value">{{ sprints|length }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Completed</div>
+    <div class="metric-value" style="color:var(--green)">{{ completed|length }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Active now</div>
+    <div class="metric-value" style="color:var(--blue)">{{ active|length }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Planning</div>
+    <div class="metric-value" style="color:var(--yellow)">{{ planning|length }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Avg completion</div>
+    <div class="metric-value">
+      {% if completed %}
+        {% set total_pct = completed | map(attribute='id') | map('string') | list %}
+        {{ (sprint_stats.values() | selectattr('pct') | map(attribute='pct') | list | sum / completed|length) | round | int }}%
+      {% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Active sprint ──────────────────────────────────────────────── #}
+{% if active %}
+<section class="panel" style="margin-bottom:1rem;border-color:rgba(59,130,246,0.4)">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem">
+    <h2 style="margin:0">Active Sprint</h2>
+    <span class="badge success">Running</span>
+  </div>
+  {% for s in active %}
+  {% set st = sprint_stats[s.id] %}
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+    <div>
+      <a href="{{ url_for('main.sprint_detail', sprint_id=s.id) }}" style="font-size:1.15rem;font-weight:700;color:var(--text)">{{ s.name }}</a>
+      {% if s.goal %}<div class="subtle" style="margin-top:0.2rem">{{ s.goal }}</div>{% endif %}
+      <div class="subtle" style="margin-top:0.4rem;font-size:0.88rem">
+        {% if s.start_date %}Started {{ s.start_date }}{% endif %}
+        {% if s.end_date %} · Ends {{ s.end_date }}
+          {% if s.end_date < today %}<span class="badge danger" style="margin-left:0.3rem">Overdue</span>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+    <div style="min-width:200px">
+      <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:0.3rem">
+        <span>{{ st.done }} / {{ st.total }} done</span>
+        <span style="color:var(--green);font-weight:600">{{ st.pct }}%</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:{{ st.pct }}%"></div></div>
+    </div>
+  </div>
+  <div style="margin-top:0.85rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+    <a href="{{ url_for('main.sprint_detail', sprint_id=s.id) }}" class="btn small primary">View Board & Report</a>
+    <form method="post" action="{{ url_for('main.sprint_complete', sprint_id=s.id) }}" style="display:inline-flex;gap:0.4rem">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <select name="incomplete_action" class="sprint-select">
+        <option value="backlog">Move unfinished → Backlog</option>
+        <option value="keep">Keep in sprint</option>
+      </select>
+      <button class="btn small success" onclick="return confirm('Complete this sprint?')">Complete Sprint</button>
+    </form>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{# ── Planning sprints ───────────────────────────────────────────── #}
+{% if planning %}
+<section class="panel" style="margin-bottom:1rem">
+  <h2 style="margin-top:0">Planning</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Goal</th><th>Dates</th><th>Tasks</th><th></th></tr></thead>
+      <tbody>
+        {% for s in planning %}
+        {% set st = sprint_stats[s.id] %}
+        <tr>
+          <td><a href="{{ url_for('main.sprint_detail', sprint_id=s.id) }}" style="font-weight:600">{{ s.name }}</a></td>
+          <td class="subtle">{{ s.goal or '—' }}</td>
+          <td class="subtle" style="font-size:0.85rem">{{ s.start_date or '—' }} → {{ s.end_date or '—' }}</td>
+          <td><span class="badge info">{{ st.total }}</span></td>
+          <td>
+            <div style="display:flex;gap:0.3rem">
+              <form method="post" action="{{ url_for('main.sprint_start', sprint_id=s.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small primary" {% if active %}title="Complete current sprint first" disabled{% endif %}>Start</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ── Completed sprints ──────────────────────────────────────────── #}
+{% if completed %}
+<section class="panel">
+  <h2 style="margin-top:0">Completed Sprints</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Sprint</th>
+          <th>Goal</th>
+          <th>Dates</th>
+          <th>Tasks</th>
+          <th>Done</th>
+          <th>Velocity</th>
+          <th>Report</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in completed | sort(attribute='id', reverse=True) %}
+        {% set st = sprint_stats[s.id] %}
+        <tr>
+          <td><strong>{{ s.name }}</strong></td>
+          <td class="subtle" style="font-size:0.88rem">{{ s.goal or '—' }}</td>
+          <td class="subtle" style="font-size:0.85rem;white-space:nowrap">
+            {{ s.start_date or '—' }} → {{ s.end_date or '—' }}
+            {% if s.start_date and s.end_date %}
+              <br><span style="font-size:0.8rem">({{ (s.end_date - s.start_date).days }} days)</span>
+            {% endif %}
+          </td>
+          <td>{{ st.total }}</td>
+          <td>
+            <span style="color:var(--green);font-weight:600">{{ st.done }}</span>
+            / {{ st.total }}
+          </td>
+          <td>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <div class="bar-track" style="width:80px"><div class="bar-fill" style="width:{{ st.pct }}%"></div></div>
+              <span style="font-size:0.85rem">{{ st.pct }}%</span>
+            </div>
+          </td>
+          <td><a href="{{ url_for('main.sprint_detail', sprint_id=s.id) }}" class="btn small">View</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if not sprints %}
+<div class="panel" style="text-align:center;padding:3rem">
+  <div style="font-size:2.5rem;margin-bottom:0.5rem">🏁</div>
+  <h3 style="margin:0 0 0.5rem">No sprints yet</h3>
+  <p class="subtle">Create your first sprint from the <a href="{{ url_for('main.tasks') }}">Tasks board</a>.</p>
+</div>
+{% endif %}
+
+{% endblock %}

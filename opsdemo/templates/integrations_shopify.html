@@ -1,0 +1,199 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Shopify Integration</h1>
+    <div class="subtle">Pull customers, orders, and invoices from your Shopify store.</div>
+  </div>
+  <div class="actions">
+    <span class="badge info">Admin GraphQL {{ api_version }}</span>
+    <a href="{{ url_for('main.settings_integrations') }}" class="btn">← Integrations</a>
+  </div>
+</div>
+
+{# Local environment notice #}
+{% if not public_base_url %}
+<div class="flash warning" style="margin-bottom:1rem;">
+  <strong>Running locally:</strong>
+  Shopify connection may fail while running locally because Shopify requires a public callback URL
+  for OAuth flows. The direct access-token (Custom App) flow below does work locally — you just
+  need a real <code>*.myshopify.com</code> store and a valid access token.
+  <br><br>
+  <strong>For full OAuth support locally:</strong> expose this app via
+  <a href="https://ngrok.com" target="_blank" rel="noopener noreferrer">ngrok</a> or
+  <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/" target="_blank" rel="noopener noreferrer">Cloudflare Tunnel</a>,
+  set <code>PUBLIC_BASE_URL</code> and <code>SHOPIFY_REDIRECT_URI</code> environment variables,
+  then redeploy or restart. See <code>.env.example</code> for all required variables.
+</div>
+{% endif %}
+
+<div class="grid" style="grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start;">
+
+  {# ── Credentials ────────────────────────────────────────────────────────── #}
+  <section class="panel">
+    <h2 style="margin-top:0;">Credentials</h2>
+    <p class="subtle" style="font-size:0.88rem; margin-top:0;">
+      Create a <strong>Custom App</strong> in your Shopify admin (Apps → Develop apps), grant it
+      <code>read_customers</code> and <code>read_orders</code> scopes, then paste the access token below.
+    </p>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="save">
+      <div class="field-row">
+        <label for="shop-domain">Store domain</label>
+        <input id="shop-domain" name="shop_domain" type="text"
+               placeholder="mystore.myshopify.com"
+               value="{{ cfg.get('shop_domain', '') }}" required>
+        <div class="subtle" style="font-size:0.8rem; margin-top:0.25rem;">Just the subdomain, e.g. <code>mystore.myshopify.com</code> — no <code>https://</code> needed.</div>
+      </div>
+      <div class="field-row">
+        <label for="access-token">Access token</label>
+        <input id="access-token" name="access_token" type="password"
+               placeholder="{{ 'Leave blank to keep saved token' if token_saved else 'shpat_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }}"
+               autocomplete="off" {% if not token_saved %}required{% endif %}>
+        <div class="subtle" style="font-size:0.8rem; margin-top:0.25rem;">
+          {% if token_saved %}A token is saved. Enter a new one only when rotating credentials.{% else %}Paste the Admin API access token after installing your custom app.{% endif %}
+          Tokens are encrypted at rest and are never rendered back into this page.
+        </div>
+      </div>
+      <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+        <button class="btn success" type="submit" style="flex:1;">Save credentials</button>
+        {% if cfg.get('shop_domain') %}
+        <button class="btn" type="button" id="test-conn-btn" onclick="testConnection()" style="flex:0 0 auto;">Test connection</button>
+        {% endif %}
+      </div>
+    </form>
+    <div id="test-conn-result" style="margin-top:0.5rem; font-size:0.85rem; display:none;"></div>
+
+    {% if cfg.get('shop_domain') %}
+    <div style="margin-top:0.75rem; padding:0.6rem 0.75rem; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; font-size:0.83rem; display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+      <span>Currently saved: <strong>{{ cfg.get('shop_domain') }}</strong></span>
+      <form method="post" style="margin:0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="disconnect">
+        <button class="btn small danger" type="submit" onclick="return confirm('Remove saved Shopify credentials?')">Disconnect</button>
+      </form>
+    </div>
+    {% endif %}
+
+    {# Security checklist #}
+    <div style="margin-top:1rem; border-top:1px solid var(--line); padding-top:0.75rem;">
+      <div style="font-size:0.82rem; font-weight:600; margin-bottom:0.4rem; color:var(--muted);">Security checklist</div>
+      <ul style="margin:0; padding-left:1.2rem; font-size:0.82rem; color:var(--muted); line-height:1.7;">
+        <li>Domain validated as <code>*.myshopify.com</code> before any request is made; pasted admin URLs are normalized automatically</li>
+        <li>Access token encrypted at rest with Fernet, keyed from <code>CREDENTIAL_ENCRYPTION_KEY</code> when configured</li>
+        <li>Token never logged or included in error messages</li>
+        <li>API calls use HTTPS and Shopify Admin GraphQL <code>{{ api_version }}</code></li>
+        <li>Rate limit (429) responses handled with automatic back-off and retry</li>
+        <li>Sync capped at 5,000 records per run to prevent runaway requests</li>
+        <li>All data sanitised before writing to local database</li>
+        <li><strong>Note:</strong> Changing the encryption key will require re-saving Shopify credentials.</li>
+      </ul>
+    </div>
+  </section>
+
+  <script>
+  function testConnection() {
+    const btn = document.getElementById('test-conn-btn');
+    const result = document.getElementById('test-conn-result');
+    btn.disabled = true;
+    btn.textContent = 'Testing…';
+    result.style.display = 'none';
+    fetch('{{ url_for("main.settings_integrations_shopify_test") }}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: 'csrf_token={{ csrf_token() }}',
+    })
+    .then(r => r.json())
+    .then(data => {
+      result.style.display = '';
+      if (data.ok) {
+        result.style.color = 'var(--green)';
+        result.textContent = 'Connected - shop: ' + (data.shop_name || '') + ' (' + (data.api_version || '{{ api_version }}') + ')';
+      } else {
+        result.style.color = 'var(--red)';
+        result.textContent = data.error || 'Connection failed';
+      }
+    })
+    .catch(() => {
+      result.style.display = '';
+      result.style.color = 'var(--red)';
+      result.textContent = 'Request failed';
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Test connection';
+    });
+  }
+  </script>
+
+  {# ── Sync actions ────────────────────────────────────────────────────────── #}
+  <div style="display:grid; gap:1rem;">
+    <section class="panel">
+      <h2 style="margin-top:0;">Sync customers → CRM</h2>
+      <p class="subtle" style="margin-top:0; font-size:0.88rem;">
+        Pulls all Shopify customers and creates or updates records in the CRM (matched by email).
+      </p>
+      <form method="post" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="sync_customers">
+        <button class="btn" type="submit" style="width:100%;"
+                {% if not cfg.get('shop_domain') %}disabled title="Save credentials first"{% endif %}>
+          Sync customers now
+        </button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2 style="margin-top:0;">Sync orders → Sales &amp; Invoices</h2>
+      <p class="subtle" style="margin-top:0; font-size:0.88rem;">
+        Pulls all Shopify orders. Each order creates a Sale entry. Unpaid or pending orders
+        also create an Invoice (prefixed <code>SHP-</code>).
+      </p>
+      <form method="post" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="sync_orders">
+        <button class="btn" type="submit" style="width:100%;"
+                {% if not cfg.get('shop_domain') %}disabled title="Save credentials first"{% endif %}>
+          Sync orders now
+        </button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2 style="margin-top:0;">Automate daily sync</h2>
+      <p class="subtle" style="margin-top:0; font-size:0.88rem;">
+        To run syncs automatically, schedule the Flask CLI command. It runs without a browser
+        session and uses the encrypted credentials saved above:
+      </p>
+      <pre style="background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:0.75rem; font-size:0.8rem; overflow-x:auto;">flask --app app shopify-sync</pre>
+    </section>
+  </div>
+</div>
+
+{# ── Sync log ────────────────────────────────────────────────────────────── #}
+{% if logs %}
+<section class="panel" style="margin-top:1.5rem;">
+  <h2 style="margin-top:0;">Sync history</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Entity</th><th>Records synced</th><th>Status</th><th>Error</th><th>When</th></tr></thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td>{{ log.entity }}</td>
+          <td>{{ log.synced_count }}</td>
+          <td><span class="badge {{ 'success' if log.status == 'ok' else 'danger' }}">{{ log.status }}</span></td>
+          <td class="subtle" style="font-size:0.82rem;">{{ log.error or '—' }}</td>
+          <td class="subtle">{{ log.synced_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

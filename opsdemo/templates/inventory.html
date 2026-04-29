@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Inventory</h1><div class="subtle">Track SKUs, stock levels, pricing, expiries, and quick stock adjustments.</div></div>
+</div>
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top: 0;">New inventory item</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>SKU<input type="text" name="sku" required></label>
+      <label>Name<input type="text" name="name" required></label>
+      <label>Category<input type="text" name="category"></label>
+      <label>Warehouse<input type="text" name="warehouse" value="Main"></label>
+      <label>Qty on hand<input type="number" name="qty_on_hand" value="0"></label>
+      <label>Reorder level<input type="number" name="reorder_level" value="0"></label>
+      <label>Unit cost<input type="number" step="0.01" name="unit_cost" value="0"></label>
+      <label>Sale price<input type="number" step="0.01" name="sale_price" value="0"></label>
+      <label>Expiry date<input type="date" name="expiry_date"></label>
+      <label style="grid-column: 1 / -1;">Notes<textarea name="notes"></textarea></label>
+      {{ cf_inputs(field_defs) }}
+      <button class="btn primary" type="submit">Create item</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2 style="margin-top: 0;">Stock register</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>SKU</th><th>Item</th><th>Warehouse</th><th>Stock</th><th>Prices</th><th>Adjust</th><th></th></tr></thead>
+        <tbody>
+          {% for item in items %}
+          {% set iv = fv_map.get(item.id, {}) %}
+          <tr>
+            <td>{{ item.sku }}</td>
+            <td>
+              <strong>{{ item.name }}</strong>
+              <div class="subtle">{{ item.category or '—' }}</div>
+              {% if item.expiry_date %}<div class="subtle">Expiry: {{ item.expiry_date }}</div>{% endif %}
+              {{ cf_display(field_defs, iv) }}
+            </td>
+            <td>{{ item.warehouse }}</td>
+            <td>
+              <span class="badge {% if item.qty_on_hand <= item.reorder_level %}danger{% else %}success{% endif %}">{{ item.qty_on_hand }}</span>
+              <div class="subtle">Reorder at {{ item.reorder_level }}</div>
+            </td>
+            <td>
+              <div>Cost: ${{ '%.2f'|format(item.unit_cost|float) }}</div>
+              <div class="subtle">Sell: ${{ '%.2f'|format(item.sale_price|float) }}</div>
+            </td>
+            <td>
+              <form method="post" action="{{ url_for('main.inventory_adjust', item_id=item.id) }}" class="mini-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="number" name="delta" value="1">
+                <button class="btn small success" type="submit">Apply</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="{{ url_for('main.inventory_delete', item_id=item.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="subtle">No inventory items yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

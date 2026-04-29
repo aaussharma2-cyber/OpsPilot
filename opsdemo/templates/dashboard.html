@@ -1,0 +1,245 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <div class="subtle">Operational pulse across tasks, stock, invoices, renewals, and sales.</div>
+  </div>
+  <div class="actions">
+    <a href="{{ url_for('main.reports') }}" class="btn">Reports</a>
+    <button id="customize-btn" class="btn">Customize</button>
+    <form method="post" action="{{ url_for('main.seed') }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn success" type="submit">Load demo data</button>
+    </form>
+    <form method="post" action="{{ url_for('main.seed') }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="force" value="1">
+      <button class="btn warning" type="submit">Reset demo data</button>
+    </form>
+  </div>
+</div>
+
+<div id="dashboard">
+  {# ── Metric zone ──────────────────────────────────────────────────────── #}
+  <div class="grid metrics" id="metric-zone">
+    {% for w in metric_widgets %}
+    <div class="card widget-metric" data-widget-id="{{ w.id }}" data-widget-type="{{ w.widget_type }}">
+      <button class="widget-remove-btn" data-widget-id="{{ w.id }}" aria-label="Remove widget">×</button>
+      {% if w.widget_type == 'metric_revenue' %}
+        <div class="subtle">Revenue</div>
+        <div class="metric-value">${{ '%.2f'|format(snapshot.metrics.revenue_total) }}</div>
+      {% elif w.widget_type == 'metric_margin' %}
+        <div class="subtle">Margin</div>
+        <div class="metric-value">${{ '%.2f'|format(snapshot.metrics.margin_total) }}</div>
+      {% elif w.widget_type == 'metric_invoice_due' %}
+        <div class="subtle">Open invoice exposure</div>
+        <div class="metric-value">${{ '%.2f'|format(snapshot.metrics.invoice_due) }}</div>
+      {% elif w.widget_type == 'metric_overdue' %}
+        <div class="subtle">Overdue invoices</div>
+        <div class="metric-value">{{ snapshot.metrics.overdue_invoices }}</div>
+      {% elif w.widget_type == 'metric_low_stock' %}
+        <div class="subtle">Low stock items</div>
+        <div class="metric-value">{{ snapshot.metrics.low_stock_items }}</div>
+      {% elif w.widget_type == 'metric_renewals' %}
+        <div class="subtle">Renewals due</div>
+        <div class="metric-value">{{ snapshot.metrics.renewals_due }}</div>
+      {% elif w.widget_type == 'metric_expiries' %}
+        <div class="subtle">Asset expiries</div>
+        <div class="metric-value">{{ snapshot.metrics.asset_expiries }}</div>
+      {% elif w.widget_type == 'metric_tasks' %}
+        <div class="subtle">Open tasks</div>
+        <div class="metric-value">{{ snapshot.metrics.task_open }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+    <button class="add-widget-placeholder card" id="add-metric-btn" data-zone="metric">
+      + Add metric
+    </button>
+  </div>
+
+  {# ── Panel zone ───────────────────────────────────────────────────────── #}
+  <div class="grid widget-grid" id="panel-zone">
+    {% for w in panel_widgets %}
+    <section class="panel widget-panel" data-widget-id="{{ w.id }}" data-widget-type="{{ w.widget_type }}" draggable="false">
+      <div class="widget-panel-header">
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+        <h2>{{ w.title or WIDGET_TYPES[w.widget_type].label }}</h2>
+        <button class="widget-remove-btn" data-widget-id="{{ w.id }}" aria-label="Remove widget">×</button>
+      </div>
+
+      {% if w.widget_type == 'sales_chart' %}
+        <p class="subtle" style="margin-top:0;">Month-by-month revenue from the sales register.</p>
+        {% set values = snapshot.sales_by_month.values() | list %}
+        {% set max_value = (values | max) if values else 0 %}
+        {% if snapshot.sales_by_month %}
+        <div class="bar-chart">
+          {% for month, value in snapshot.sales_by_month.items() %}
+          <div class="bar-row">
+            <div>{{ month }}</div>
+            <div class="bar-track"><div class="bar-fill" style="width: {{ 0 if max_value == 0 else ((value / max_value) * 100) | round(2) }}%;"></div></div>
+            <div>${{ '%.0f'|format(value) }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="subtle">No sales captured yet.</div>
+        {% endif %}
+
+      {% elif w.widget_type == 'alerts' %}
+        <p class="subtle" style="margin-top:0;">Expiring assets, renewals, overdue invoices, and low stock.</p>
+        {% if snapshot.alerts %}
+        <div class="alert-list">
+          {% for alert in snapshot.alerts %}
+          <div class="alert-item {{ alert.severity }}">
+            <div><span class="badge {{ alert.severity }}">{{ alert.label }}</span></div>
+            <div style="margin-top:0.35rem;"><strong>{{ alert.title }}</strong></div>
+            <div class="subtle" style="margin-top:0.2rem;">{{ alert.detail }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="subtle">No active alerts.</div>
+        {% endif %}
+
+      {% elif w.widget_type == 'low_stock_table' %}
+        {% if snapshot.top_items %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>SKU</th><th>Item</th><th>On hand</th><th>Reorder</th></tr></thead>
+            <tbody>
+              {% for item in snapshot.top_items %}
+              <tr>
+                <td>{{ item.sku }}</td>
+                <td>{{ item.name }}</td>
+                <td>{{ item.qty_on_hand }}</td>
+                <td>{{ item.reorder_level }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="subtle">Inventory list is empty.</div>
+        {% endif %}
+
+      {% elif w.widget_type == 'invoices_table' %}
+        {% if extra.recent_invoices %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Ref</th><th>Party</th><th>Amount</th><th>Due</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for inv in extra.recent_invoices %}
+              <tr>
+                <td>{{ inv.reference }}</td>
+                <td>{{ inv.party_name }}</td>
+                <td>${{ '%.2f'|format(inv.amount) }}</td>
+                <td>{{ inv.due_date.isoformat() }}</td>
+                <td><span class="badge {{ 'danger' if inv.due_date < today else 'warning' }}">{{ inv.status }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="subtle">No unpaid invoices.</div>
+        {% endif %}
+
+      {% elif w.widget_type == 'tasks_table' %}
+        {% if extra.open_tasks %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Due</th></tr></thead>
+            <tbody>
+              {% for task in extra.open_tasks %}
+              <tr>
+                <td>{{ task.title }}</td>
+                <td>{{ task.status }}</td>
+                <td><span class="badge {{ 'danger' if task.priority in ['Critical','High'] else 'warning' if task.priority == 'Medium' else 'info' }}">{{ task.priority }}</span></td>
+                <td>{{ task.due_date.isoformat() if task.due_date else '—' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="subtle">No open tasks.</div>
+        {% endif %}
+
+      {% elif w.widget_type == 'contacts_table' %}
+        {% if extra.recent_contacts %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Company</th><th>Type</th><th>Stage</th></tr></thead>
+            <tbody>
+              {% for c in extra.recent_contacts %}
+              <tr>
+                <td>{{ c.name }}</td>
+                <td>{{ c.company or '—' }}</td>
+                <td>{{ c.kind }}</td>
+                <td>{{ c.stage }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="subtle">No contacts yet.</div>
+        {% endif %}
+
+      {% elif w.widget_type == 'saved_report' %}
+        {% set rdata = report_widget_data.get(w.id, []) %}
+        {% if w.report %}
+        <p class="subtle" style="margin-top:0; font-size:0.85rem;">
+          {{ w.report.entity }} · {{ w.report.metric }}
+          <a href="{{ url_for('main.report_detail', rid=w.report.id) }}" style="margin-left:0.5rem;">View full →</a>
+        </p>
+        {% endif %}
+        {% if rdata %}
+          {% set max_val = rdata | map(attribute='value') | max %}
+          <div class="bar-chart" style="margin-top:0.5rem;">
+            {% for row in rdata[:8] %}
+            <div class="bar-row" style="grid-template-columns: 100px 1fr 70px;">
+              <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.82rem;" title="{{ row.label }}">{{ row.label }}</div>
+              <div class="bar-track"><div class="bar-fill" style="width:{{ 0 if max_val == 0 else ((row.value / max_val) * 100) | round(1) }}%;"></div></div>
+              <div style="text-align:right; font-size:0.82rem;">{{ row.value | fmt_num }}</div>
+            </div>
+            {% endfor %}
+            {% if rdata | length > 8 %}<div class="subtle" style="font-size:0.8rem; margin-top:0.5rem;">+ {{ rdata | length - 8 }} more rows</div>{% endif %}
+          </div>
+        {% else %}
+        <div class="subtle">No data yet for this report.</div>
+        {% endif %}
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    <button class="add-widget-placeholder panel-placeholder" id="add-panel-btn" data-zone="panel">
+      + Add panel
+    </button>
+  </div>
+</div>
+
+{# ── Widget picker modal ───────────────────────────────────────────────────── #}
+<div id="widget-modal" class="widget-modal" role="dialog" aria-label="Add Widget" aria-hidden="true">
+  <div class="widget-modal-box">
+    <div class="widget-modal-head">
+      <h2>Add Widget</h2>
+      <button id="widget-modal-close" class="btn small">Close</button>
+    </div>
+    <p class="subtle" id="widget-modal-desc">Select a widget to add to the dashboard.</p>
+    <div class="widget-picker-grid" id="widget-picker-grid">
+      {% for key, info in WIDGET_TYPES.items() %}
+      {% if key != 'saved_report' %}
+      <button class="widget-option-btn" data-widget-type="{{ key }}" data-zone="{{ info.zone }}">
+        {{ info.label }}
+      </button>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <p class="subtle" style="font-size:0.82rem; margin-top:1rem;">
+      To pin a saved report, use the <strong>📌 Pin to Dashboard</strong> button on any report's detail page.
+    </p>
+  </div>
+</div>
+{% endblock %}

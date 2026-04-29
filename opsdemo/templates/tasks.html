@@ -1,0 +1,311 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div id="tp-overlay" class="tp-overlay"></div>
+<aside id="task-panel" class="task-panel" aria-hidden="true">
+  <div class="tp-head">
+    <span id="tp-status-badge" class="badge info"></span>
+    <button id="tp-close" class="btn small" aria-label="Close panel">✕ Close</button>
+  </div>
+  <div id="tp-body" class="tp-body"><p class="subtle" style="padding:1rem">Loading…</p></div>
+</aside>
+
+<div class="page-head">
+  <div>
+    <h1>Tasks & Kanban</h1>
+    <div class="subtle">Track work across operations, finance, sales, vendors, and inventory.</div>
+  </div>
+</div>
+
+{# ── Sprint bar ─────────────────────────────────────────────────────────── #}
+<div class="sprint-bar">
+  {% if active_sprint %}
+  <div class="sprint-active-info">
+    <span class="sprint-label">Active Sprint</span>
+    <strong>{{ active_sprint.name }}</strong>
+    {% if active_sprint.goal %}<span class="sprint-goal subtle">· {{ active_sprint.goal }}</span>{% endif %}
+    {% if active_sprint.end_date %}
+      <span class="badge {% if active_sprint.end_date < today %}danger{% else %}info{% endif %}">
+        ends {{ active_sprint.end_date }}
+      </span>
+    {% endif %}
+    <span class="subtle" style="margin-left:0.3rem">{{ sprint_tasks|length }} task{{ 's' if sprint_tasks|length != 1 else '' }}</span>
+  </div>
+  <div class="sprint-actions">
+    <form method="post" action="{{ url_for('main.sprint_complete', sprint_id=active_sprint.id) }}" style="display:inline-flex;gap:0.4rem;align-items:center">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <select name="incomplete_action" class="sprint-select">
+        <option value="backlog">Move unfinished → Backlog</option>
+        <option value="keep">Keep unfinished in sprint</option>
+      </select>
+      <button type="submit" class="btn success small" onclick="return confirm('Complete this sprint?')">Complete Sprint</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="sprint-active-info subtle">No active sprint — start one below or create a new sprint.</div>
+  <div class="sprint-actions">
+    {% for sp in planning_sprints %}
+    <form method="post" action="{{ url_for('main.sprint_start', sprint_id=sp.id) }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn primary small">▶ Start: {{ sp.name }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Two-column layout: new task form | sprint kanban or empty state ──────── #}
+<div class="two-col" style="margin-top:1rem">
+  <section class="panel">
+    <h2 style="margin-top:0">New task</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Title
+        <input type="text" name="title" required>
+      </label>
+      <label>Sprint
+        <select name="sprint_id_new">
+          <option value="">— Backlog (no sprint) —</option>
+          {% for sp in all_sprints %}
+          <option value="{{ sp.id }}">{{ sp.name }} ({{ sp.status }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Status
+        <select name="status">
+          {% for status in task_columns %}
+          <option value="{{ status }}">{{ status }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Priority
+        <select name="priority">
+          {% for priority in priorities %}
+          <option value="{{ priority }}">{{ priority }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Due date
+        <input type="date" name="due_date">
+      </label>
+      <label>Owner
+        <input type="text" name="owner" placeholder="Ops, Finance, Sales...">
+      </label>
+      <label>Related type
+        <input type="text" name="related_type" placeholder="invoice / vendor / crm">
+      </label>
+      <label>Related name
+        <input type="text" name="related_name" placeholder="INV-2026-1001">
+      </label>
+      <label style="grid-column: 1 / -1;">Description
+        <textarea name="description"></textarea>
+      </label>
+      {{ cf_inputs(field_defs) }}
+      <button type="submit" class="btn primary">Create task</button>
+    </form>
+
+    <div class="tp-divider" style="margin:1.5rem 0 1rem"></div>
+    <h2 style="margin:0 0 0.75rem">New sprint</h2>
+    <form method="post" action="{{ url_for('main.sprint_create') }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Sprint name
+        <input type="text" name="name" placeholder="Sprint 1" required>
+      </label>
+      <label>Start date
+        <input type="date" name="start_date">
+      </label>
+      <label>End date
+        <input type="date" name="end_date">
+      </label>
+      <label style="grid-column: 1 / -1;">Goal
+        <input type="text" name="goal" placeholder="What will be achieved?">
+      </label>
+      <button type="submit" class="btn primary">Create sprint</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    {% if active_sprint %}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+      <h2 style="margin:0">{{ active_sprint.name }} Board</h2>
+      <span class="badge success">Active</span>
+    </div>
+    <p class="subtle" style="margin:0 0 0.85rem">Drag a task card into a new column to update status.</p>
+    <div class="kanban">
+      {% for status, tasks in grouped.items() %}
+      <div class="kanban-col" data-status-column="{{ status }}">
+        <div class="page-head" style="margin-bottom:0.7rem">
+          <strong>{{ status }}</strong>
+          <span class="badge info">{{ tasks|length }}</span>
+        </div>
+        <div class="task-list">
+          {% for task in tasks %}
+          {% set is_overdue = task.due_date and task.due_date < today %}
+          {% set task_vals = fv_map.get(task.id, {}) %}
+          <article class="task-card{% if is_overdue %} overdue{% endif %}" draggable="true" data-task-id="{{ task.id }}" data-status="{{ task.status }}" data-priority="{{ task.priority }}" data-due="{{ task.due_date or '' }}">
+            <h3 class="task-card-title">{{ task.title }}</h3>
+            <div class="task-meta">
+              <span class="badge {% if task.priority in ['Critical','High'] %}danger{% elif task.priority == 'Medium' %}warning{% else %}info{% endif %}">{{ task.priority }}</span>
+              {% if task.due_date %}<span class="badge {% if is_overdue %}danger{% else %}info{% endif %}">{% if is_overdue %}Overdue {% endif %}{{ task.due_date }}</span>{% endif %}
+            </div>
+            {% if task.description %}<p>{{ task.description }}</p>{% endif %}
+            {% if task.owner %}<p>Owner: {{ task.owner }}</p>{% endif %}
+            {% if task.related_name %}<p>Linked: {{ task.related_type or 'item' }} · {{ task.related_name }}</p>{% endif %}
+            {{ cf_display(field_defs, task_vals) }}
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.5rem">
+              <details class="task-edit">
+                <summary class="btn small">Edit</summary>
+                <form method="post" action="{{ url_for('main.task_edit', task_id=task.id) }}" class="task-edit-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <label>Title<input type="text" name="title" value="{{ task.title }}" required></label>
+                  <label>Status
+                    <select name="status">
+                      {% for s in task_columns %}<option value="{{ s }}"{% if s == task.status %} selected{% endif %}>{{ s }}</option>{% endfor %}
+                    </select>
+                  </label>
+                  <label>Priority
+                    <select name="priority">
+                      {% for p in priorities %}<option value="{{ p }}"{% if p == task.priority %} selected{% endif %}>{{ p }}</option>{% endfor %}
+                    </select>
+                  </label>
+                  <label>Due date<input type="date" name="due_date" value="{{ task.due_date or '' }}"></label>
+                  <label>Owner<input type="text" name="owner" value="{{ task.owner or '' }}"></label>
+                  <label>Description<textarea name="description">{{ task.description or '' }}</textarea></label>
+                  {{ cf_inputs(field_defs, task_vals) }}
+                  <button type="submit" class="btn small primary">Save</button>
+                </form>
+              </details>
+              <form method="post" action="{{ url_for('main.task_delete', task_id=task.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="sprint-empty">
+      <div style="font-size:2rem;margin-bottom:0.5rem">🏁</div>
+      <h3 style="margin:0 0 0.4rem">No active sprint</h3>
+      <p class="subtle">Create a sprint using the form on the left, then start it to activate the board.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+{# ── Backlog ──────────────────────────────────────────────────────────────── #}
+<section class="panel backlog-section" style="margin-top:1.2rem">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem">
+    <div>
+      <h2 style="margin:0">Backlog</h2>
+      <div class="subtle">Tasks not assigned to any sprint · {{ backlog_tasks|length }} item{{ 's' if backlog_tasks|length != 1 else '' }}</div>
+    </div>
+  </div>
+
+  {% if backlog_tasks %}
+  {# Bulk-assign toolbar #}
+  {% if all_sprints %}
+  <form method="post" action="{{ url_for('main.tasks_bulk_sprint') }}" id="bulk-sprint-form" style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <span class="subtle" id="bulk-count" style="font-size:0.88rem">0 selected</span>
+    <select name="sprint_id" class="sprint-select">
+      <option value="">— move to Backlog (remove sprint) —</option>
+      {% for sp in all_sprints %}
+      <option value="{{ sp.id }}">{{ sp.name }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn primary small" id="bulk-assign-btn" disabled>Assign selected</button>
+    <button type="button" class="btn small" id="bulk-select-all">Select all</button>
+  </form>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% if all_sprints %}<th style="width:32px"><input type="checkbox" id="chk-all" title="Select all"></th>{% endif %}
+          <th>Title</th>
+          <th>Priority</th>
+          <th>Due</th>
+          <th>Owner</th>
+          <th>Linked</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in backlog_tasks %}
+        {% set is_overdue = task.due_date and task.due_date < today %}
+        <tr>
+          {% if all_sprints %}
+          <td><input type="checkbox" name="task_ids" value="{{ task.id }}" form="bulk-sprint-form" class="backlog-chk"></td>
+          {% endif %}
+          <td>
+            <span class="task-card-title" data-task-id="{{ task.id }}" style="cursor:pointer">{{ task.title }}</span>
+          </td>
+          <td><span class="badge {% if task.priority in ['Critical','High'] %}danger{% elif task.priority == 'Medium' %}warning{% else %}info{% endif %}">{{ task.priority }}</span></td>
+          <td>{% if task.due_date %}<span class="badge {% if is_overdue %}danger{% else %}info{% endif %}">{% if is_overdue %}⚠ {% endif %}{{ task.due_date }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td>{{ task.owner or '—' }}</td>
+          <td>{% if task.related_name %}<span class="subtle">{{ task.related_type or 'item' }} · {{ task.related_name }}</span>{% else %}—{% endif %}</td>
+          <td>
+            <form method="post" action="{{ url_for('main.task_delete', task_id=task.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn small danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="subtle" style="margin:0">All tasks are assigned to a sprint or completed.</p>
+  {% endif %}
+</section>
+
+{# ── Done / Completed ─────────────────────────────────────────────────────── #}
+{% if done_tasks %}
+<details class="panel done-section" style="margin-top:1.2rem">
+  <summary class="done-summary">
+    <span>Completed / Done</span>
+    <span class="badge info" style="margin-left:0.5rem">{{ done_tasks|length }}</span>
+    <span class="subtle" style="margin-left:0.5rem;font-size:0.85rem">(click to expand)</span>
+  </summary>
+  <div class="table-wrap" style="margin-top:0.85rem">
+    <table>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Priority</th>
+          <th>Owner</th>
+          <th>Completed</th>
+          <th>Sprint</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in done_tasks %}
+        <tr>
+          <td>
+            <span class="task-card-title" data-task-id="{{ task.id }}" style="cursor:pointer">{{ task.title }}</span>
+          </td>
+          <td><span class="badge {% if task.priority in ['Critical','High'] %}danger{% elif task.priority == 'Medium' %}warning{% else %}info{% endif %}">{{ task.priority }}</span></td>
+          <td>{{ task.owner or '—' }}</td>
+          <td class="subtle" style="font-size:0.88rem">{{ task.updated_at.strftime('%d %b %Y') }}</td>
+          <td>{% if task.sprint %}<span class="badge info">{{ task.sprint.name }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td>
+            <form method="post" action="{{ url_for('main.task_delete', task_id=task.id) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn small danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endif %}
+
+{% endblock %}

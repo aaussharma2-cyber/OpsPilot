@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>User Management</h1>
+    <div class="subtle">Add, edit, or remove users. Admins can do everything; managers can edit data; viewers are read-only.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Settings</a>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">Add user</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="add">
+      <label style="grid-column:1/-1">Username
+        <input type="text" name="username" required autocomplete="off" placeholder="e.g. jane.ops">
+      </label>
+      <label style="grid-column:1/-1">Password
+        <input type="password" name="password" required autocomplete="new-password" placeholder="min 10 characters">
+      </label>
+      <label>Role
+        <select name="role">
+          {% for r in roles %}<option value="{{ r }}">{{ r | capitalize }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn primary" style="align-self:end">Create user</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Users ({{ users|length }})</h2>
+    {% if users %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>
+              <strong>{{ u.username }}</strong>
+              {% if u.id == g.user.id %}<span class="badge info" style="margin-left:0.35rem">You</span>{% endif %}
+            </td>
+            <td>
+              <span class="badge {% if u.role == 'admin' %}danger{% elif u.role == 'manager' %}warning{% else %}info{% endif %}">{{ u.role }}</span>
+            </td>
+            <td class="subtle" style="font-size:0.85rem">{{ u.created_at.strftime('%d %b %Y') }}</td>
+            <td>
+              <div style="display:flex;gap:0.3rem;align-items:center">
+                <details class="col-edit">
+                  <summary class="btn small">Edit</summary>
+                  <div class="col-edit-form" style="min-width:220px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:0.7rem;margin-top:0.4rem">
+                    <form method="post">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="edit">
+                      <input type="hidden" name="user_id" value="{{ u.id }}">
+                      <label>Role
+                        <select name="role">
+                          {% for r in roles %}<option value="{{ r }}"{% if r == u.role %} selected{% endif %}>{{ r | capitalize }}</option>{% endfor %}
+                        </select>
+                      </label>
+                      <label>New password <span class="subtle">(leave blank to keep)</span>
+                        <input type="password" name="password" autocomplete="new-password" placeholder="new password">
+                      </label>
+                      <button type="submit" class="btn small primary" style="margin-top:0.35rem">Save</button>
+                    </form>
+                  </div>
+                </details>
+                {% if u.id != g.user.id %}
+                <form method="post" class="inline" onsubmit="return confirm('Delete user {{ u.username }}?')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="user_id" value="{{ u.id }}">
+                  <button class="btn small danger">Delete</button>
+                </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="subtle">No users found.</p>
+    {% endif %}
+
+    <div class="tp-divider" style="margin:1.2rem 0 1rem"></div>
+    <h3 style="margin:0 0 0.5rem;font-size:0.9rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">Role permissions</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Role</th><th>Access</th></tr></thead>
+        <tbody>
+          <tr><td><span class="badge danger">admin</span></td><td>Full access — settings, users, all modules</td></tr>
+          <tr><td><span class="badge warning">manager</span></td><td>Create & edit all data, no settings access</td></tr>
+          <tr><td><span class="badge info">viewer</span></td><td>Read-only across all modules</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:1.2rem; border-top:1px solid var(--line); padding-top:0.75rem;">
+      <div style="font-size:0.82rem; font-weight:600; margin-bottom:0.4rem; color:var(--muted);">Password security</div>
+      <ul style="margin:0; padding-left:1.2rem; font-size:0.82rem; color:var(--muted); line-height:1.7;">
+        <li>Passwords are hashed with <strong>PBKDF2-HMAC-SHA256</strong> — not stored in plaintext, cannot be recovered</li>
+        <li>Minimum 10 characters enforced on create and change</li>
+        <li>Login is rate-limited — account locks for 5 minutes after 5 failed attempts</li>
+        <li>All forms are CSRF-protected — cross-site request forgery is blocked</li>
+        <li>Sessions use <code>HttpOnly</code> + <code>SameSite=Lax</code> cookies</li>
+        <li>Default credentials on the login page are hidden — never shown publicly</li>
+      </ul>
+    </div>
+  </section>
+</div>
+{% endblock %}

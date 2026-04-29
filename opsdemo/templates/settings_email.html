@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Email Settings</h1>
+    <div class="subtle">Configure SMTP to send invoices and notifications directly from OpsPilot.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Back to Settings</a>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">SMTP configuration</h2>
+    <form method="post" class="form-grid" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="save">
+
+      <label style="grid-column:1/-1">
+        SMTP host
+        <input type="text" name="host" value="{{ cfg.get('host','') }}" placeholder="smtp.gmail.com or smtp.sendgrid.net">
+      </label>
+      <label>
+        Port
+        <input type="number" name="port" value="{{ cfg.get('port','587') }}" placeholder="587">
+      </label>
+      <label style="display:flex;align-items:center;gap:0.5rem;color:var(--text);margin-top:1.9rem;">
+        <input type="checkbox" name="use_tls" style="width:auto" {% if cfg.get('use_tls','true') != 'false' %}checked{% endif %}> Use STARTTLS
+      </label>
+      <label>
+        Username
+        <input type="text" name="username" value="{{ cfg.get('username','') }}" placeholder="your@email.com">
+      </label>
+      <label>
+        Password
+        <input type="password" name="password" placeholder="{{ 'Saved — leave blank to keep' if password_saved else 'Enter SMTP password' }}">
+      </label>
+      <label style="grid-column:1/-1">
+        From address
+        <input type="email" name="from_addr" value="{{ cfg.get('from_addr','') }}" placeholder="noreply@yourcompany.com">
+        <span class="subtle" style="font-size:0.82rem;margin-top:0.2rem">Displays as sender on outgoing invoices. Defaults to username if blank.</span>
+      </label>
+
+      <button class="btn primary" type="submit">Save settings</button>
+    </form>
+
+    {% if cfg.get('host') %}
+    <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
+    <h3 style="margin:0 0 0.75rem">Test connection</h3>
+    <p class="subtle" style="margin:0 0 0.75rem;font-size:0.9rem">Verify that OpsPilot can reach your SMTP server with the saved credentials (auth only — no email sent).</p>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="test">
+      <button class="btn success" type="submit">Test SMTP connection</button>
+    </form>
+
+    <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
+    <h3 style="margin:0 0 0.25rem">Send test email</h3>
+    <p class="subtle" style="margin:0 0 0.75rem;font-size:0.9rem">
+      Send an actual email to verify end-to-end delivery. If you receive it, invoices will work.
+      If not, check spam and verify your SPF/DKIM records.
+    </p>
+    <form method="post" class="form-grid" style="gap:0.75rem" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="send_test">
+      <label style="grid-column:1/-1">
+        Send test to
+        <input type="email" name="test_recipient" placeholder="you@example.com" required>
+      </label>
+      <button class="btn primary" type="submit">Send test email</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">How it works</h2>
+    <div style="display:grid;gap:1rem">
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">✉</span>
+        <div>
+          <strong>Invoice emails</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            On the <a href="{{ url_for('main.renewals') }}">Renewals</a> page, click
+            <strong>Send Invoice</strong> next to any renewal to create an invoice and
+            optionally email it to the contact.
+          </p>
+        </div>
+      </div>
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">🔒</span>
+        <div>
+          <strong>Secure storage</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            Your SMTP password is encrypted at rest using the same key as integration
+            credentials. Never stored in plain text.
+          </p>
+        </div>
+      </div>
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">⚡</span>
+        <div>
+          <strong>Common providers</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            Works with Gmail (use an App Password), Outlook, SendGrid, Mailgun,
+            Postmark, or any SMTP relay. Port 587 + STARTTLS is recommended.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

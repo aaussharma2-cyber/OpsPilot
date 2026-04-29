@@ -1,0 +1,41 @@
+{% macro cf_inputs(field_defs, values={}) %}
+{% for fd in field_defs %}
+<label>{{ fd.name }}{% if fd.required %} <span style="color:var(--red)">*</span>{% endif %}
+  {% set val = values.get(fd.id, '') %}
+  {% if fd.field_type == 'text' %}
+    <input type="text" name="cf_{{ fd.field_key }}" value="{{ val }}"{% if fd.required %} required{% endif %}>
+  {% elif fd.field_type == 'number' %}
+    <input type="number" name="cf_{{ fd.field_key }}" value="{{ val }}"{% if fd.required %} required{% endif %}>
+  {% elif fd.field_type == 'date' %}
+    <input type="date" name="cf_{{ fd.field_key }}" value="{{ val }}"{% if fd.required %} required{% endif %}>
+  {% elif fd.field_type == 'select' %}
+    <select name="cf_{{ fd.field_key }}"{% if fd.required %} required{% endif %}>
+      <option value="">— select —</option>
+      {% for opt in fd.options_list %}
+      <option value="{{ opt }}"{% if opt == val %} selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+  {% elif fd.field_type == 'checkbox' %}
+    <label style="flex-direction:row;gap:0.4rem;align-items:center;color:var(--text)">
+      <input type="checkbox" name="cf_{{ fd.field_key }}" value="yes"{% if val == 'yes' %} checked{% endif %} style="width:auto">
+      {{ fd.name }}
+    </label>
+  {% endif %}
+</label>
+{% endfor %}
+{% endmacro %}
+
+{% macro cf_display(field_defs, values) %}
+{% set ns = namespace(has=false) %}
+{% for fd in field_defs %}{% if values.get(fd.id) %}{% set ns.has = true %}{% endif %}{% endfor %}
+{% if ns.has %}
+<div class="cf-display">
+  {% for fd in field_defs %}
+  {% set v = values.get(fd.id) %}
+  {% if v %}
+  <span class="cf-chip"><span class="cf-label">{{ fd.name }}</span> {{ v }}</span>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

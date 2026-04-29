@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Invoices</h1><div class="subtle">Track receivables, payables, due dates, and payment status.</div></div>
+</div>
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top: 0;">New invoice</h2>
+    <form method="post" class="form-grid" id="invoice-create-form" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      {% if active_renewals %}
+      <label style="grid-column: 1 / -1;">
+        Link to renewal <span class="subtle" style="font-size:0.82rem">(optional — auto-fills fields below)</span>
+        <select id="renewal-prefill" name="renewal_link">
+          <option value="">— Select a renewal to prefill —</option>
+          {% for r in active_renewals %}
+          <option value="{{ r.id }}"
+            data-party="{{ (r.contact_name or r.provider or r.title) | e }}"
+            data-amount="{{ r.cost }}"
+            data-due="{{ r.renew_on.isoformat() }}"
+            data-title="{{ r.title | e }}"
+            data-ref="RNW-{{ '%03d'|format(r.id) }}"
+          >{{ r.title }}{% if r.provider %} · {{ r.provider }}{% endif %} — {{ r.renew_on.strftime('%d %b %Y') }} — ${{ '%.2f'|format(r.cost|float) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div id="renewal-hint" style="display:none;grid-column:1/-1;">
+        <div class="renewal-prefill-banner">
+          <span>✓ Fields prefilled from renewal. Adjust as needed before saving.</span>
+          <button type="button" id="clear-renewal-prefill" class="btn small">Clear</button>
+        </div>
+      </div>
+      {% endif %}
+
+      <label>Type
+        <select name="kind">
+          <option value="sales">Sales</option>
+          <option value="purchase">Purchase</option>
+        </select>
+      </label>
+      <label>Reference<input type="text" name="reference" id="inv-reference" required placeholder="e.g. INV-2024-001"></label>
+      <label>Party name<input type="text" name="party_name" id="inv-party" required placeholder="Customer or vendor name"></label>
+      <label>Amount<input type="number" step="0.01" name="amount" id="inv-amount" value="0" required min="0"></label>
+      <label>Due date<input type="date" name="due_date" id="inv-due-date" required></label>
+      <label>Status
+        <select name="status">
+          <option value="Unpaid">Unpaid</option>
+          <option value="Part Paid">Part Paid</option>
+          <option value="Paid">Paid</option>
+        </select>
+      </label>
+      <label>Paid on<input type="date" name="paid_on"></label>
+      <label style="grid-column: 1 / -1;">Notes<textarea name="notes" placeholder="Optional notes…"></textarea></label>
+      {{ cf_inputs(field_defs) }}
+      <button class="btn primary" type="submit">Create invoice</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2 style="margin-top: 0;">Invoice register</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ref</th><th>Party</th><th>Type</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for invoice in invoices %}
+          {% set iv = fv_map.get(invoice.id, {}) %}
+          <tr>
+            <td>
+              <strong>{{ invoice.reference }}</strong>
+              {% if invoice.notes %}<div class="subtle">{{ invoice.notes }}</div>{% endif %}
+              {{ cf_display(field_defs, iv) }}
+            </td>
+            <td>{{ invoice.party_name }}</td>
+            <td>{{ invoice.kind|title }}</td>
+            <td>${{ '%.2f'|format(invoice.amount|float) }}</td>
+            <td>
+              {{ invoice.due_date }}
+              {% if invoice.status != 'Paid' and invoice.due_date < today %}
+              <div><span class="badge danger">Overdue</span></div>
+              {% endif %}
+            </td>
+            <td><span class="badge {% if invoice.status == 'Paid' %}success{% elif invoice.due_date < today %}danger{% else %}warning{% endif %}">{{ invoice.status }}</span></td>
+            <td style="white-space:nowrap;">
+              {% if invoice.status != 'Paid' %}
+              <form method="post" action="{{ url_for('main.invoice_mark_paid', invoice_id=invoice.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small success" type="submit">Mark paid</button>
+              </form>
+              {% endif %}
+              <a href="{{ url_for('main.invoice_export_pdf', invoice_id=invoice.id) }}"
+                 class="btn small" title="Export PDF" style="display:inline-block;">PDF</a>
+              <form method="post" action="{{ url_for('main.invoice_delete', invoice_id=invoice.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="subtle">No invoices yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

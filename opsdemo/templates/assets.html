@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Assets</h1><div class="subtle">Track equipment, software, licenses, and expiry dates.</div></div>
+  <a href="{{ url_for('main.assets_export_pdf') }}" class="btn">Export PDF</a>
+</div>
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top: 0;">New asset</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Name<input type="text" name="name" required></label>
+      <label>Category<input type="text" name="category"></label>
+      <label>Serial number<input type="text" name="serial_number"></label>
+      <label>Owner<input type="text" name="owner"></label>
+      <label>Status<input type="text" name="status" value="Active"></label>
+      <label>Purchase cost<input type="number" step="0.01" name="purchase_cost" value="0"></label>
+      <label>Current value<input type="number" step="0.01" name="current_value" value="0"></label>
+      <label>Expiry date<input type="date" name="expiry_date"></label>
+      <label style="grid-column: 1 / -1;">Notes<textarea name="notes"></textarea></label>
+      {{ cf_inputs(field_defs) }}
+      <button class="btn primary" type="submit">Create asset</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2 style="margin-top: 0;">Asset register</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Asset</th><th>Owner</th><th>Status</th><th>Value</th><th>Expiry</th><th></th></tr></thead>
+        <tbody>
+          {% for asset in assets %}
+          {% set av = fv_map.get(asset.id, {}) %}
+          <tr>
+            <td>
+              <strong>{{ asset.name }}</strong>
+              <div class="subtle">{{ asset.category or '—' }} · {{ asset.serial_number or 'No serial' }}</div>
+              {% if asset.notes %}<div class="subtle">{{ asset.notes }}</div>{% endif %}
+              {{ cf_display(field_defs, av) }}
+            </td>
+            <td>{{ asset.owner or '—' }}</td>
+            <td><span class="badge {% if asset.status == 'Active' %}success{% else %}warning{% endif %}">{{ asset.status }}</span></td>
+            <td>${{ '%.2f'|format(asset.current_value|float) }}</td>
+            <td>{{ asset.expiry_date or '—' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('main.asset_delete', asset_id=asset.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="subtle">No assets yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

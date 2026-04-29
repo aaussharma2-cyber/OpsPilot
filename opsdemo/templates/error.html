@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="panel">
+  <h1 style="margin-top: 0;">{{ code }}</h1>
+  <p class="subtle">{{ message }}</p>
+  {% if g.user %}
+  <a class="btn" href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+  {% else %}
+  <a class="btn" href="{{ url_for('main.login') }}">Back to login</a>
+  {% endif %}
+</div>
+{% endblock %}

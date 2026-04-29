@@ -1,0 +1,89 @@
+{% from '_macros.html' import cf_inputs %}
+{% set is_overdue = task.due_date and task.due_date < today %}
+
+<form id="tp-form" method="post" action="{{ url_for('main.task_edit', task_id=task.id) }}" class="tp-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="tp-field-row">
+    <label class="tp-label">Title</label>
+    <input class="tp-input" type="text" name="title" value="{{ task.title }}" required>
+  </div>
+
+  <div class="tp-grid">
+    <div class="tp-field-row">
+      <label class="tp-label">Status</label>
+      <select name="status" class="tp-input">
+        {% for s in task_columns %}<option value="{{ s }}"{% if s == task.status %} selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="tp-field-row">
+      <label class="tp-label">Priority</label>
+      <select name="priority" class="tp-input">
+        {% for p in priorities %}<option value="{{ p }}"{% if p == task.priority %} selected{% endif %}>{{ p }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="tp-field-row">
+      <label class="tp-label">Due date</label>
+      <input class="tp-input{% if is_overdue %} tp-overdue{% endif %}" type="date" name="due_date" value="{{ task.due_date or '' }}">
+    </div>
+    <div class="tp-field-row">
+      <label class="tp-label">Owner</label>
+      <input class="tp-input" type="text" name="owner" value="{{ task.owner or '' }}" placeholder="Ops, Finance…">
+    </div>
+    <div class="tp-field-row">
+      <label class="tp-label">Related type</label>
+      <input class="tp-input" type="text" name="related_type" value="{{ task.related_type or '' }}" placeholder="invoice / crm…">
+    </div>
+    <div class="tp-field-row">
+      <label class="tp-label">Related name</label>
+      <input class="tp-input" type="text" name="related_name" value="{{ task.related_name or '' }}">
+    </div>
+  </div>
+
+  <div class="tp-field-row">
+    <label class="tp-label">Description</label>
+    <textarea class="tp-input" name="description" rows="3">{{ task.description or '' }}</textarea>
+  </div>
+
+  {% if field_defs %}
+  <div class="tp-section-label">Custom fields</div>
+  <div class="tp-grid">
+    {{ cf_inputs(field_defs, task_vals) }}
+  </div>
+  {% endif %}
+
+  <div class="tp-actions">
+    <button type="submit" class="btn primary">Save changes</button>
+    <span id="tp-save-msg" class="subtle" style="display:none"></span>
+  </div>
+</form>
+
+<div class="tp-divider"></div>
+
+<div class="tp-history">
+  <div class="tp-section-label">Activity</div>
+  {% if history %}
+  <div class="history-list">
+    {% for h in history %}
+    <div class="history-row">
+      <div class="history-dot {% if h.field == 'status' %}dot-blue{% elif h.field == 'created' %}dot-green{% else %}dot-muted{% endif %}"></div>
+      <div class="history-body">
+        {% if h.field == 'created' %}
+          <span>Task created</span>
+        {% elif h.old_value and h.new_value %}
+          <span class="history-field">{{ h.field }}</span> changed
+          <span class="history-val">{{ h.old_value }}</span> → <span class="history-val">{{ h.new_value }}</span>
+        {% elif h.new_value %}
+          <span class="history-field">{{ h.field }}</span> set to <span class="history-val">{{ h.new_value }}</span>
+        {% else %}
+          <span class="history-field">{{ h.field }}</span> cleared
+        {% endif %}
+        <span class="history-time">{{ h.changed_at.strftime('%d %b %H:%M') }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle" style="margin:0.5rem 0">No history yet.</p>
+  {% endif %}
+</div>

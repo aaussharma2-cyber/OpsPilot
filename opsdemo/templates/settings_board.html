@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Board Columns</h1>
+    <div class="subtle">Drag to reorder. Renaming moves all tasks automatically.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Settings</a>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">Add column</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="add">
+      <label>Column name
+        <input type="text" name="name" required placeholder="e.g. Waiting">
+      </label>
+      <label>Color
+        <select name="color">
+          {% for c in column_colors %}
+          <option value="{{ c }}">{{ c|title if c else 'Default' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="btn primary" type="submit">Add column</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Current columns <span class="subtle" style="font-size:0.85rem;font-weight:400">— drag to reorder</span></h2>
+    <div id="col-list">
+      {% for col in columns %}
+      <div class="col-row" data-col-id="{{ col.id }}">
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+        <span class="col-dot {% if col.color %}col-{{ col.color }}{% endif %}"></span>
+        <span class="col-name">{{ col.name }}</span>
+        <div class="col-actions">
+          <details class="col-edit">
+            <summary class="btn small">Edit</summary>
+            <form method="post" class="col-edit-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="rename">
+              <input type="hidden" name="col_id" value="{{ col.id }}">
+              <label>Name<input type="text" name="name" value="{{ col.name }}" required></label>
+              <label>Color
+                <select name="color">
+                  {% for c in column_colors %}
+                  <option value="{{ c }}"{% if c == (col.color or '') %} selected{% endif %}>{{ c|title if c else 'Default' }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <button class="btn small primary" type="submit">Save</button>
+            </form>
+          </details>
+          <form method="post" class="inline" onsubmit="return confirm('Delete column and move tasks to first remaining column?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="col_id" value="{{ col.id }}">
+            <button class="btn small danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <p class="subtle">No columns yet. Add one above.</p>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

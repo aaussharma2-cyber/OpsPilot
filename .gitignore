@@ -1,0 +1,44 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+# Local dev Flask config — sets FLASK_DEBUG=1, must not go to production
+.flaskenv
+
+# Flask instance folder (DB, config overrides)
+instance/
+*.db
+*.sqlite
+*-journal
+*-wal
+*-shm
+
+# Logs
+logs/
+*.log
+
+# Uploads / private files
+uploads/private/
+
+# Test / build artefacts
+.pytest_cache/
+.pytest-basetemp/
+.tmp/
+TEST_RESULTS.txt
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db

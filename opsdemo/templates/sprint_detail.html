@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_display %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ sprint.name }}</h1>
+    <div class="subtle">
+      {% if sprint.goal %}{{ sprint.goal }} · {% endif %}
+      <span class="badge {% if sprint.status == 'Active' %}success{% elif sprint.status == 'Completed' %}info{% else %}warning{% endif %}">{{ sprint.status }}</span>
+      {% if sprint.start_date %} · {{ sprint.start_date }}{% endif %}{% if sprint.end_date %} → {{ sprint.end_date }}{% endif %}
+    </div>
+  </div>
+  <a href="{{ url_for('main.sprint_list') }}" class="btn small">← All Sprints</a>
+</div>
+
+{# ── Completion bar ───────────────────────────────────────────────── #}
+<div class="panel" style="margin-bottom:1rem">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.8rem;margin-bottom:0.7rem">
+    <div class="grid metrics" style="flex:1;min-width:0">
+      <div>
+        <div class="subtle">Total tasks</div>
+        <div class="metric-value">{{ total }}</div>
+      </div>
+      <div>
+        <div class="subtle">Done</div>
+        <div class="metric-value" style="color:var(--green)">{{ done }}</div>
+      </div>
+      <div>
+        <div class="subtle">Remaining</div>
+        <div class="metric-value" style="color:var(--yellow)">{{ total - done }}</div>
+      </div>
+      <div>
+        <div class="subtle">Completion</div>
+        <div class="metric-value" style="color:{{ 'var(--green)' if pct == 100 else 'var(--blue)' }}">{{ pct }}%</div>
+      </div>
+      {% if sprint.start_date and sprint.end_date %}
+      <div>
+        <div class="subtle">Duration</div>
+        <div class="metric-value" style="font-size:1.2rem">{{ (sprint.end_date - sprint.start_date).days }}d</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="bar-track" style="height:16px">
+    <div class="bar-fill" style="width:{{ pct }}%"></div>
+  </div>
+</div>
+
+{# ── Status breakdown ─────────────────────────────────────────────── #}
+<div class="panel" style="margin-bottom:1rem">
+  <h2 style="margin-top:0">Status Breakdown</h2>
+  <div class="bar-chart">
+    {% for col in columns %}
+    {% set col_tasks = by_status.get(col, []) %}
+    {% set col_pct = (col_tasks|length / total * 100) | round | int if total else 0 %}
+    <div class="bar-row">
+      <div style="font-size:0.88rem;color:var(--muted)">{{ col }}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:{{ col_pct }}%"></div></div>
+      <div style="font-size:0.88rem;text-align:right">{{ col_tasks|length }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Task list by status ───────────────────────────────────────────── #}
+{% for col in columns %}
+{% set col_tasks = by_status.get(col, []) %}
+{% if col_tasks %}
+<details class="panel" style="margin-bottom:0.75rem" {% if loop.first %}open{% endif %}>
+  <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:0.6rem;font-weight:600;font-size:1rem;padding:0.1rem 0">
+    {{ col }}
+    <span class="badge info">{{ col_tasks|length }}</span>
+  </summary>
+  <div class="table-wrap" style="margin-top:0.85rem">
+    <table>
+      <thead>
+        <tr><th>Title</th><th>Priority</th><th>Due</th><th>Owner</th></tr>
+      </thead>
+      <tbody>
+        {% for task in col_tasks %}
+        {% set is_overdue = task.due_date and task.due_date < today %}
+        <tr>
+          <td>
+            <span style="cursor:pointer;color:var(--text)" class="task-card-title" data-task-id="{{ task.id }}">{{ task.title }}</span>
+            {% if task.description %}<div class="subtle" style="font-size:0.82rem;margin-top:0.15rem">{{ task.description[:80] }}{% if task.description|length > 80 %}…{% endif %}</div>{% endif %}
+          </td>
+          <td><span class="badge {% if task.priority in ['Critical','High'] %}danger{% elif task.priority == 'Medium' %}warning{% else %}info{% endif %}">{{ task.priority }}</span></td>
+          <td>{% if task.due_date %}<span class="badge {% if is_overdue %}danger{% else %}info{% endif %}">{% if is_overdue %}⚠ {% endif %}{{ task.due_date }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td class="subtle">{{ task.owner or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endif %}
+{% endfor %}
+
+{# ── Task panel overlay ───────────────────────────────────────────── #}
+<div id="tp-overlay" class="tp-overlay"></div>
+<aside id="task-panel" class="task-panel" aria-hidden="true">
+  <div class="tp-head">
+    <span id="tp-status-badge" class="badge info"></span>
+    <button id="tp-close" class="btn small" aria-label="Close panel">✕ Close</button>
+  </div>
+  <div id="tp-body" class="tp-body"><p class="subtle" style="padding:1rem">Loading…</p></div>
+</aside>
+{% endblock %}

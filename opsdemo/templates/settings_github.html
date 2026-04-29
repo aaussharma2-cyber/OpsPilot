@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>GitHub</h1>
+    <div class="subtle">Push this project to GitHub with one click using a Personal Access Token.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Back to Settings</a>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">Repository settings</h2>
+    <form method="post" class="form-grid" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="save">
+
+      <label style="grid-column:1/-1">
+        Personal Access Token
+        <input type="password" name="token"
+               placeholder="{{ 'Saved — leave blank to keep' if token_saved else 'ghp_xxxxxxxxxxxxxxxxxxxx' }}">
+        <span class="subtle" style="font-size:0.82rem;margin-top:0.2rem">
+          Needs <strong>repo</strong> scope. Generate one at
+          <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>.
+        </span>
+      </label>
+
+      <label>
+        GitHub username
+        <input type="text" name="username" value="{{ cfg.get('username','') }}" placeholder="your-github-username" required>
+      </label>
+      <label>
+        Branch
+        <input type="text" name="branch" value="{{ cfg.get('branch','main') }}" placeholder="main">
+      </label>
+
+      <label style="grid-column:1/-1">
+        Repository name
+        <input type="text" name="repo_name" value="{{ cfg.get('repo_name','') }}" placeholder="my-opspilot-app" required>
+      </label>
+      <label style="grid-column:1/-1">
+        Description <span class="subtle" style="font-size:0.82rem">(optional)</span>
+        <input type="text" name="description" value="{{ cfg.get('description','') }}" placeholder="OpsPilot Local — ops workspace">
+      </label>
+
+      <label style="display:flex;align-items:center;gap:0.5rem;color:var(--text);grid-column:1/-1">
+        <input type="checkbox" name="private" style="width:auto"
+               {% if cfg.get('private','0') == '1' %}checked{% endif %}>
+        Private repository
+      </label>
+
+      <button class="btn primary" type="submit">Save settings</button>
+    </form>
+
+    {% if cfg.get('repo_name') %}
+    <hr style="border:none;border-top:1px solid var(--line);margin:1.5rem 0">
+    <h3 style="margin:0 0 0.5rem">Repository actions</h3>
+    <p class="subtle" style="margin:0 0 1rem;font-size:0.9rem">
+      Create the repository on GitHub (if it doesn't exist yet), then push all project files.
+    </p>
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="create_repo">
+        <input type="hidden" name="username" value="{{ cfg.get('username','') }}">
+        <input type="hidden" name="repo_name" value="{{ cfg.get('repo_name','') }}">
+        <input type="hidden" name="branch" value="{{ cfg.get('branch','main') }}">
+        <input type="hidden" name="description" value="{{ cfg.get('description','') }}">
+        <input type="hidden" name="private" value="{{ cfg.get('private','0') }}">
+        <button class="btn" type="submit">Create repository on GitHub</button>
+      </form>
+      <form method="post" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="push">
+        <input type="hidden" name="username" value="{{ cfg.get('username','') }}">
+        <input type="hidden" name="repo_name" value="{{ cfg.get('repo_name','') }}">
+        <input type="hidden" name="branch" value="{{ cfg.get('branch','main') }}">
+        <input type="hidden" name="description" value="{{ cfg.get('description','') }}">
+        <input type="hidden" name="private" value="{{ cfg.get('private','0') }}">
+        <button class="btn success" type="submit">Push to GitHub</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">How it works</h2>
+    <div style="display:grid;gap:1rem">
+
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">🔑</span>
+        <div>
+          <strong>Personal Access Token</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            Create a classic PAT with the <code>repo</code> scope at
+            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>.
+            Your token is encrypted at rest — never stored in plain text.
+          </p>
+        </div>
+      </div>
+
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">📦</span>
+        <div>
+          <strong>Create, then push</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            Click <strong>Create repository</strong> once to make the repo on GitHub.
+            Then click <strong>Push to GitHub</strong> whenever you want to snapshot the
+            current project files. Each push force-updates the branch.
+          </p>
+        </div>
+      </div>
+
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">🗂</span>
+        <div>
+          <strong>What gets pushed</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            All project files respecting <code>.gitignore</code>. The SQLite database
+            (<code>instance/opsdemo.db</code>) and secrets are excluded automatically.
+          </p>
+        </div>
+      </div>
+
+      <div class="alert-item info" style="display:flex;gap:0.75rem;align-items:flex-start">
+        <span style="font-size:1.2rem">⚠</span>
+        <div>
+          <strong>Force push</strong>
+          <p class="subtle" style="margin:0.25rem 0 0;font-size:0.9rem">
+            Each push uses <code>--force</code>, which overwrites remote history.
+            This is intentional for a single-developer snapshot workflow. If you need
+            full git history, use the terminal directly.
+          </p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+</div>
+{% endblock %}

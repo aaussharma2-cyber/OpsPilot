@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Sales</h1><div class="subtle">Capture order-level revenue, cost, quantity, and channel performance.</div></div>
+  <a href="{{ url_for('main.sales_export_pdf') }}" class="btn">Export PDF</a>
+</div>
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top: 0;">New sale</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Order ref<input type="text" name="order_ref" required></label>
+      <label>Customer<input type="text" name="customer_name" required></label>
+      <label>Order date<input type="date" name="order_date" required></label>
+      <label>Channel<input type="text" name="channel" placeholder="Direct / Marketplace / Wholesale"></label>
+      <label>Revenue<input type="number" step="0.01" name="revenue" value="0"></label>
+      <label>Cost<input type="number" step="0.01" name="cost" value="0"></label>
+      <label>Quantity<input type="number" name="quantity" value="1"></label>
+      {{ cf_inputs(field_defs) }}
+      <button class="btn primary" type="submit">Create sale</button>
+    </form>
+    <div class="panel" style="margin-top: 1rem;">
+      <h3 style="margin-top: 0;">Monthly revenue</h3>
+      {% set values = monthly.values() | list %}
+      {% set max_value = (values | max) if values else 0 %}
+      {% if monthly %}
+      <div class="bar-chart">
+        {% for month, value in monthly.items() %}
+        <div class="bar-row">
+          <div>{{ month }}</div>
+          <div class="bar-track"><div class="bar-fill" style="width: {{ 0 if max_value == 0 else ((value / max_value) * 100) | round(2) }}%;"></div></div>
+          <div>${{ '%.0f'|format(value) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="subtle">No sales yet.</div>
+      {% endif %}
+    </div>
+  </section>
+  <section class="panel">
+    <h2 style="margin-top: 0;">Sales register</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Order</th><th>Date</th><th>Customer</th><th>Channel</th><th>Revenue</th><th>Margin</th><th></th></tr></thead>
+        <tbody>
+          {% for sale in sales %}
+          {% set sv = fv_map.get(sale.id, {}) %}
+          <tr>
+            <td>
+              {{ sale.order_ref }}
+              {{ cf_display(field_defs, sv) }}
+            </td>
+            <td>{{ sale.order_date }}</td>
+            <td>{{ sale.customer_name }}</td>
+            <td>{{ sale.channel or '—' }}</td>
+            <td>${{ '%.2f'|format(sale.revenue|float) }}</td>
+            <td>${{ '%.2f'|format((sale.revenue|float) - (sale.cost|float)) }}</td>
+            <td>
+              <form method="post" action="{{ url_for('main.sales_delete', sale_id=sale.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="subtle">No sales yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

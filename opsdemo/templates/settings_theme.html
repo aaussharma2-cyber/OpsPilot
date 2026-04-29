@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Theme</h1>
+    <div class="subtle">Choose a colour palette — applied instantly across all pages.</div>
+  </div>
+  <div class="actions">
+    <a href="{{ url_for('main.settings') }}" class="btn">← Settings</a>
+  </div>
+</div>
+
+<form method="post" id="theme-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="theme" id="theme-input" value="{{ current_theme }}">
+
+  <div class="theme-grid">
+    {% for key, info in THEMES.items() %}
+    <button type="button"
+            class="theme-card {{ 'theme-active' if key == current_theme else '' }}"
+            data-theme-key="{{ key }}"
+            onclick="selectTheme('{{ key }}')">
+      <div class="theme-preview theme-preview-{{ key }}">
+        <div class="tp-bar"></div>
+        <div class="tp-panel">
+          <div class="tp-metric"></div>
+          <div class="tp-metric"></div>
+          <div class="tp-metric"></div>
+        </div>
+        <div class="tp-chart">
+          <div class="tp-bar-row"><div class="tp-bar-fill" style="width:80%"></div></div>
+          <div class="tp-bar-row"><div class="tp-bar-fill" style="width:55%"></div></div>
+          <div class="tp-bar-row"><div class="tp-bar-fill" style="width:35%"></div></div>
+        </div>
+      </div>
+      <div class="theme-card-label">
+        <strong>{{ info.label }}</strong>
+        {% if key == current_theme %}<span class="badge success" style="margin-left:0.4rem;">Active</span>{% endif %}
+      </div>
+      <div class="subtle" style="font-size:0.83rem; margin-top:0.2rem;">{{ info.description }}</div>
+    </button>
+    {% endfor %}
+  </div>
+
+  <div style="margin-top:1.5rem;">
+    <button class="btn success" type="submit" id="save-theme-btn">Save theme</button>
+    <span class="subtle" style="margin-left:1rem; font-size:0.85rem;" id="theme-hint">Click a theme above then save.</span>
+  </div>
+</form>
+
+<script>
+function selectTheme(key) {
+  document.getElementById('theme-input').value = key;
+  document.querySelectorAll('.theme-card').forEach(c => c.classList.remove('theme-active'));
+  document.querySelector(`[data-theme-key="${key}"]`)?.classList.add('theme-active');
+  document.getElementById('theme-hint').textContent = 'Click Save theme to apply.';
+  // Live-preview by swapping data-theme on <html>
+  document.documentElement.setAttribute('data-theme', key);
+}
+</script>
+{% endblock %}

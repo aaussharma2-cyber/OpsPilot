@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <div class="subtle">Customise your workspace — boards, fields, automations, integrations, and appearance.</div>
+  </div>
+</div>
+
+<h2 style="margin: 1.5rem 0 0.75rem; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em;">Workspace</h2>
+<div class="grid settings-grid">
+
+  <a href="{{ url_for('main.settings_board') }}" class="card settings-card">
+    <div class="settings-icon">⬛</div>
+    <h3>Board Columns</h3>
+    <p>Add, rename, reorder or delete kanban columns. Changes apply to the Tasks board immediately.</p>
+    <span class="badge info">{{ column_count }} column{{ 's' if column_count != 1 else '' }}</span>
+  </a>
+
+  <a href="{{ url_for('main.settings_fields') }}" class="card settings-card">
+    <div class="settings-icon">🗂</div>
+    <h3>Custom Fields</h3>
+    <p>Extend any module with extra fields — text, number, date, dropdown, or checkbox.</p>
+    <span class="badge info">{{ field_count }} field{{ 's' if field_count != 1 else '' }}</span>
+  </a>
+
+  <a href="{{ url_for('main.settings_workflows') }}" class="card settings-card">
+    <div class="settings-icon">⚡</div>
+    <h3>Workflows</h3>
+    <p>Automate actions across CRM, Finance, and Tasks. Trigger on any event with flexible conditions.</p>
+    <span class="badge info">{{ workflow_count }} workflow{{ 's' if workflow_count != 1 else '' }}</span>
+  </a>
+
+  <a href="{{ url_for('main.settings_users') }}" class="card settings-card">
+    <div class="settings-icon">👤</div>
+    <h3>User Management</h3>
+    <p>Add, edit, or remove users. Assign roles — admin, manager, or viewer.</p>
+    <span class="badge info">{{ user_count }} user{{ 's' if user_count != 1 else '' }}</span>
+  </a>
+
+  <a href="{{ url_for('main.sprint_list') }}" class="card settings-card">
+    <div class="settings-icon">🏁</div>
+    <h3>Sprint Management</h3>
+    <p>View all sprints, see velocity reports, and review completed sprint history.</p>
+    <span class="badge info">{{ sprint_count }} sprint{{ 's' if sprint_count != 1 else '' }}</span>
+  </a>
+
+</div>
+
+<h2 style="margin: 2rem 0 0.75rem; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em;">Appearance &amp; Integrations</h2>
+<div class="grid settings-grid">
+
+  <a href="{{ url_for('main.settings_theme') }}" class="card settings-card">
+    <div class="settings-icon">🎨</div>
+    <h3>Theme</h3>
+    <p>Switch between Dark, Light, Ocean, and Warm colour palettes. Applied instantly across all pages.</p>
+    <span class="badge info">{{ THEMES[current_theme].label if current_theme in THEMES else current_theme }}</span>
+  </a>
+
+  <a href="{{ url_for('main.settings_integrations') }}" class="card settings-card">
+    <div class="settings-icon">🔗</div>
+    <h3>Integrations</h3>
+    <p>Connect Shopify to sync customers into CRM and orders into Sales &amp; Invoices automatically.</p>
+    <span class="badge {{ 'success' if integration_count > 0 else 'warning' }}">
+      {{ 'Connected' if integration_count > 0 else 'Not configured' }}
+    </span>
+  </a>
+
+  <a href="{{ url_for('main.settings_email') }}" class="card settings-card">
+    <div class="settings-icon">✉</div>
+    <h3>Email (SMTP)</h3>
+    <p>Configure outgoing email to send invoices from the Renewals page directly to your contacts.</p>
+    <span class="badge {{ 'success' if smtp_configured else 'warning' }}">
+      {{ 'Configured' if smtp_configured else 'Not configured' }}
+    </span>
+  </a>
+
+</div>
+
+<h2 style="margin: 2rem 0 0.75rem; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em;">Monitoring &amp; Security</h2>
+<div class="grid settings-grid">
+
+  <a href="{{ url_for('main.notifications') }}" class="card settings-card">
+    <div class="settings-icon">🔔</div>
+    <h3>Notifications</h3>
+    <p>View workflow alerts, low-stock warnings, invoice reminders, and other system notifications.</p>
+    <span class="badge info">Notification center</span>
+  </a>
+
+  <a href="{{ url_for('main.audit_log') }}" class="card settings-card">
+    <div class="settings-icon">📋</div>
+    <h3>Audit Log</h3>
+    <p>Full trail of logins, data changes, email sends, exports, and Shopify syncs with user and timestamp.</p>
+    <span class="badge info">{{ audit_count }} entr{{ 'ies' if audit_count != 1 else 'y' }}</span>
+  </a>
+
+</div>
+{% endblock %}

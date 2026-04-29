@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Custom Fields</h1>
+    <div class="subtle">Add extra fields to any module. They appear in create forms and record rows.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Settings</a>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">Add field</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="add">
+      <label>Module
+        <select name="entity_type" id="field-entity-select">
+          {% for et in entity_types %}
+          <option value="{{ et }}"{% if et == selected_entity %} selected{% endif %}>{{ entity_labels[et] }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Field name
+        <input type="text" name="name" required placeholder="e.g. Priority Score">
+      </label>
+      <label>Type
+        <select name="field_type" id="field-type-select">
+          {% for ft in field_types %}<option value="{{ ft }}">{{ ft|title }}</option>{% endfor %}
+        </select>
+      </label>
+      <label id="options-row" style="display:none">Options (comma-separated)
+        <input type="text" name="options" placeholder="Option A, Option B, Option C">
+      </label>
+      <label style="display:flex;gap:0.5rem;align-items:center;margin-top:0.2rem">
+        <input type="checkbox" name="required" style="width:auto"> Required
+      </label>
+      <button class="btn primary" type="submit">Add field</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">
+      Fields for
+      <span style="color:var(--text)">{{ entity_labels[selected_entity] }}</span>
+    </h2>
+    <div style="margin-bottom:1rem">
+      {% for et in entity_types %}
+      <a href="{{ url_for('main.settings_fields', entity_type=et) }}"
+         class="btn small{% if et == selected_entity %} primary{% endif %}"
+         style="margin:0.15rem">{{ entity_labels[et] }}</a>
+      {% endfor %}
+    </div>
+    {% if field_defs %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Options</th><th>Req.</th><th></th></tr></thead>
+        <tbody>
+          {% for fd in field_defs %}
+          <tr>
+            <td><strong>{{ fd.name }}</strong><div class="subtle">key: {{ fd.field_key }}</div></td>
+            <td><span class="badge info">{{ fd.field_type }}</span></td>
+            <td>{{ fd.options_list | join(', ') if fd.options_list else '—' }}</td>
+            <td>{% if fd.required %}<span class="badge warning">Yes</span>{% else %}—{% endif %}</td>
+            <td>
+              <form method="post" class="inline" onsubmit="return confirm('Delete field and all its values?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="fd_id" value="{{ fd.id }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="subtle">No custom fields for this module yet.</p>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+document.getElementById('field-type-select').addEventListener('change', function () {
+  document.getElementById('options-row').style.display = this.value === 'select' ? '' : 'none';
+});
+document.getElementById('field-entity-select').addEventListener('change', function () {
+  window.location = '{{ url_for("main.settings_fields") }}?entity_type=' + this.value;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import cf_inputs, cf_display %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>CRM</h1>
+    <div class="subtle">Lightweight lead and customer tracking.</div>
+  </div>
+</div>
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top: 0;">New contact</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Type
+        <select name="kind">
+          {% for kind in contact_kinds %}<option value="{{ kind }}">{{ kind|title }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Name<input type="text" name="name" required></label>
+      <label>Company<input type="text" name="company"></label>
+      <label>Email<input type="email" name="email"></label>
+      <label>Phone<input type="text" name="phone"></label>
+      <label>Stage<input type="text" name="stage" placeholder="New / Qualified / Won"></label>
+      <label style="grid-column: 1 / -1;">Notes<textarea name="notes"></textarea></label>
+      {{ cf_inputs(field_defs) }}
+      <button class="btn primary" type="submit">Create contact</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2 style="margin-top: 0;">Contacts</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Name</th><th>Company</th><th>Stage</th><th>Contact</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for contact in contacts %}
+          {% set cv = fv_map.get(contact.id, {}) %}
+          <tr>
+            <td><span class="badge {% if contact.kind == 'customer' %}success{% else %}info{% endif %}">{{ contact.kind|title }}</span></td>
+            <td>
+              <strong>{{ contact.name }}</strong>
+              {% if contact.notes %}<div class="subtle">{{ contact.notes }}</div>{% endif %}
+              {{ cf_display(field_defs, cv) }}
+            </td>
+            <td>{{ contact.company or '—' }}</td>
+            <td>{{ contact.stage }}</td>
+            <td>
+              <div>{{ contact.email or '—' }}</div>
+              <div class="subtle">{{ contact.phone or '' }}</div>
+            </td>
+            <td>
+              <details class="task-edit">
+                <summary class="btn small">Edit</summary>
+                <form method="post" action="{{ url_for('main.crm_edit', contact_id=contact.id) }}" class="task-edit-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <label>Name<input type="text" name="name" value="{{ contact.name }}" required></label>
+                  <label>Type
+                    <select name="kind">{% for k in contact_kinds %}<option value="{{ k }}"{% if k == contact.kind %} selected{% endif %}>{{ k|title }}</option>{% endfor %}</select>
+                  </label>
+                  <label>Company<input type="text" name="company" value="{{ contact.company or '' }}"></label>
+                  <label>Email<input type="email" name="email" value="{{ contact.email or '' }}"></label>
+                  <label>Phone<input type="text" name="phone" value="{{ contact.phone or '' }}"></label>
+                  <label>Stage<input type="text" name="stage" value="{{ contact.stage }}"></label>
+                  <label>Notes<textarea name="notes">{{ contact.notes or '' }}</textarea></label>
+                  {{ cf_inputs(field_defs, cv) }}
+                  <button type="submit" class="btn small primary">Save</button>
+                </form>
+              </details>
+              <form method="post" action="{{ url_for('main.crm_delete', contact_id=contact.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="subtle">No contacts yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

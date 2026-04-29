@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Notifications</h1>
+    <div class="subtle">Workflow alerts, stock warnings, invoice reminders, and other system events.</div>
+  </div>
+  <div class="actions">
+    {% if unread > 0 %}
+    <form method="post" action="{{ url_for('main.notifications_read_all') }}" style="display:inline;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit">Mark all read</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('main.notifications_clear_read') }}" style="display:inline;"
+          onsubmit="return confirm('Delete all read notifications?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn danger" type="submit">Clear read</button>
+    </form>
+  </div>
+</div>
+
+{# Severity filter tabs #}
+<div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap;">
+  <a href="{{ url_for('main.notifications') }}" class="btn small {% if not severity_filter %}active{% endif %}">All</a>
+  <a href="{{ url_for('main.notifications', severity='danger') }}" class="btn small {% if severity_filter == 'danger' %}active{% endif %}">Critical</a>
+  <a href="{{ url_for('main.notifications', severity='warning') }}" class="btn small {% if severity_filter == 'warning' %}active{% endif %}">Warnings</a>
+  <a href="{{ url_for('main.notifications', severity='info') }}" class="btn small {% if severity_filter == 'info' %}active{% endif %}">Info</a>
+</div>
+
+{% if unread > 0 %}
+<div class="flash warning" style="margin-bottom:1rem;">
+  <span>{{ unread }} unread notification{{ 's' if unread != 1 else '' }}</span>
+</div>
+{% endif %}
+
+{% if alerts %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:2rem;"></th>
+        <th>Severity</th>
+        <th>Title</th>
+        <th>Detail</th>
+        <th>Source</th>
+        <th>When</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for alert in alerts %}
+      <tr class="{{ '' if alert.is_read else 'unread-row' }}" id="notif-{{ alert.id }}"
+          style="{{ '' if alert.is_read else 'font-weight:500;' }}">
+        <td>
+          {% if not alert.is_read %}
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%;
+                       background:var(--accent, #3b82f6);" title="Unread"></span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge {{ alert.severity }}">{{ alert.severity | title }}</span>
+        </td>
+        <td>{{ alert.title }}</td>
+        <td class="subtle" style="font-size:0.85rem; max-width:320px;">{{ alert.detail or '—' }}</td>
+        <td class="subtle" style="font-size:0.82rem;">{{ alert.source or '—' }}</td>
+        <td class="subtle" style="font-size:0.82rem; white-space:nowrap;">{{ alert.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>
+          {% if not alert.is_read %}
+          <form method="post" action="{{ url_for('main.notification_mark_read', alert_id=alert.id) }}" style="margin:0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn small" type="submit" title="Mark as read">✓</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# Pagination #}
+{% if total > per_page %}
+<div style="display:flex; gap:0.5rem; justify-content:center; margin-top:1rem;">
+  {% if page > 1 %}
+  <a href="{{ url_for('main.notifications', page=page-1, severity=severity_filter) }}" class="btn small">← Prev</a>
+  {% endif %}
+  <span class="subtle" style="line-height:2rem;">Page {{ page }} of {{ ((total - 1) // per_page) + 1 }}</span>
+  {% if page * per_page < total %}
+  <a href="{{ url_for('main.notifications', page=page+1, severity=severity_filter) }}" class="btn small">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="panel" style="text-align:center; padding:2.5rem 1rem; color:var(--muted);">
+  <div style="font-size:2rem; margin-bottom:0.5rem;">🔔</div>
+  <div>No notifications{% if severity_filter %} for this filter{% endif %}.</div>
+  <div class="subtle" style="margin-top:0.25rem; font-size:0.85rem;">
+    Notifications are created by workflow automations and system events.
+  </div>
+</div>
+{% endif %}
+{% endblock %}

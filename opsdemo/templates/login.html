@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>Login · OpsPilot Local</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  </head>
+  <body>
+    <div class="login-wrap">
+      <div class="panel login-card">
+        <h1 style="margin-top: 0;">OpsPilot Local</h1>
+        <p class="subtle">Local self-hosted operations demo with kanban, CRM, inventory, invoicing, renewals, and dashboards.</p>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-list">
+          {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+        <form method="post" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label>Username
+            <input type="text" name="username" autocomplete="username" required>
+          </label>
+          <label>Password
+            <input type="password" name="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit" class="btn primary">Sign in</button>
+        </form>
+        <div class="subtle" style="margin-top: 1rem; font-size: 0.82rem; text-align: center;">
+          First-run credentials are set via <code>DEMO_USERNAME</code> and <code>DEMO_PASSWORD</code> environment variables.
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

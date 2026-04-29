@@ -1,0 +1,377 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Workflows</h1>
+    <div class="subtle">Automate actions across modules. Use <code>{field}</code> placeholders in titles, e.g. <code>{name}</code>, <code>{reference}</code>. Supports flexible field conditions including date ranges.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Settings</a>
+</div>
+
+{# Pass entity_fields + condition_ops to JS as JSON #}
+<script>
+const WF_ENTITY_FIELDS = {{ entity_fields | tojson }};
+const WF_CONDITION_OPS = {{ condition_ops | tojson }};
+</script>
+
+<div class="two-col">
+  {# ── Create form ──────────────────────────────────────────────── #}
+  <section class="panel">
+    <h2 style="margin-top:0">New workflow</h2>
+    <form method="post" class="form-grid" id="wf-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="add">
+
+      <label style="grid-column:1/-1">Workflow name
+        <input type="text" name="name" required placeholder="e.g. Alert when renewal is in 7 days">
+      </label>
+
+      <label>When this module…
+        <select name="trigger_entity" id="wf-entity">
+          {% for et in entity_types %}
+          <option value="{{ et }}">{{ entity_labels[et] }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>…fires this event
+        <select name="trigger_event" id="wf-event">
+          {% for et in entity_types %}
+          {% for ev_key, ev_label, needs_val in trigger_events[et] %}
+          <option value="{{ ev_key }}" data-entity="{{ et }}" data-needs-val="{{ 'true' if needs_val else 'false' }}">{{ ev_label }}</option>
+          {% endfor %}
+          {% endfor %}
+        </select>
+      </label>
+
+      {# Legacy simple value match (for status_changed / stage_changed) #}
+      <label id="wf-val-row">Value to match
+        <input type="text" name="trigger_value" id="wf-val-input" placeholder="e.g. Won, Blocked, Done">
+      </label>
+
+      {# ── Flexible condition builder ── #}
+      <div style="grid-column:1/-1">
+        <div class="tp-section-label" style="margin-bottom:0.4rem">— OR use flexible field condition —</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem">
+          <label>Field
+            <select name="cond_field" id="wf-cond-field">
+              <option value="">— none —</option>
+            </select>
+          </label>
+          <label>Operator
+            <select name="cond_op" id="wf-cond-op">
+              <option value="">—</option>
+            </select>
+          </label>
+          <label>Value
+            <input type="text" name="cond_value" id="wf-cond-value" placeholder="e.g. 7, Done, 2026-01-01">
+          </label>
+        </div>
+        <div class="subtle" id="wf-cond-hint" style="font-size:0.82rem;margin-top:0.3rem"></div>
+      </div>
+
+      <label style="grid-column:1/-1">Action
+        <select name="action_type" id="wf-action">
+          {% for ak, al in workflow_actions %}
+          <option value="{{ ak }}">{{ al }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <div id="act-create-task" class="action-fields" style="display:none;grid-column:1/-1">
+        <div class="form-grid">
+          <label style="grid-column:1/-1">Task title template
+            <input type="text" name="act_title" placeholder="Follow up: {name}">
+          </label>
+          <label>Initial status
+            <select name="act_status">
+              {% for col in columns %}<option value="{{ col }}">{{ col }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Priority
+            <select name="act_priority">
+              {% for p in priorities %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Owner<input type="text" name="act_owner" placeholder="Finance, Ops…"></label>
+          <label>Linked name template<input type="text" name="act_related_name" placeholder="{reference} or {name}"></label>
+          <label style="grid-column:1/-1">Description template
+            <textarea name="act_description" style="min-height:52px"></textarea>
+          </label>
+        </div>
+      </div>
+
+      <div id="act-update-status" class="action-fields" style="display:none;grid-column:1/-1">
+        <div class="form-grid">
+          <label>Move linked tasks to
+            <select name="act_status">
+              {% for col in columns %}<option value="{{ col }}">{{ col }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Match tasks by related name template
+            <input type="text" name="act_related_name" placeholder="{reference} or {name}">
+          </label>
+        </div>
+      </div>
+
+      <div id="act-send-alert" class="action-fields" style="display:none;grid-column:1/-1">
+        <div class="form-grid">
+          <label style="grid-column:1/-1">Alert title template
+            <input type="text" name="act_alert_title" placeholder="Renewal due: {title}">
+          </label>
+          <label>Severity
+            <select name="act_alert_severity">
+              <option value="info">Info</option>
+              <option value="warning" selected>Warning</option>
+              <option value="danger">Danger</option>
+            </select>
+          </label>
+          <label>Detail template
+            <input type="text" name="act_alert_detail" placeholder="{provider} renews {renew_on}">
+          </label>
+        </div>
+      </div>
+
+      <button class="btn primary" type="submit" style="grid-column:1/-1">Create workflow</button>
+    </form>
+  </section>
+
+  {# ── Workflow list ─────────────────────────────────────────────── #}
+  <section class="panel">
+    <h2 style="margin-top:0">Workflows ({{ workflows|length }})</h2>
+    {% if workflows %}
+    <div style="display:grid;gap:0.75rem">
+      {% for wf in workflows %}
+      {% set cfg = wf.action_config | fromjson %}
+      {% set cond = wf.trigger_condition | fromjson %}
+      <div class="wf-card">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.5rem">
+          <div>
+            <strong>{{ wf.name }}</strong>
+            <div class="subtle" style="font-size:0.85rem;margin-top:0.2rem">
+              <span class="badge info">{{ entity_labels.get(wf.trigger_entity, wf.trigger_entity) }}</span>
+              {{ wf.trigger_event.replace('_',' ') }}
+              {% if cond %}
+                → <code style="font-size:0.8rem">{{ cond.get('field','') }} {{ cond.get('op','') }} {{ cond.get('value','') }}</code>
+              {% endif %}
+              → <span class="badge {% if wf.action_type == 'send_alert' %}warning{% else %}info{% endif %}">{{ wf.action_type.replace('_',' ') }}</span>
+            </div>
+            {% if wf.action_type == 'send_alert' and cfg %}
+            <div class="subtle" style="font-size:0.82rem;margin-top:0.15rem">Alert: "{{ cfg.get('title','') }}"</div>
+            {% elif wf.action_type == 'create_task' and cfg %}
+            <div class="subtle" style="font-size:0.82rem;margin-top:0.15rem">Task: "{{ cfg.get('title','') }}"</div>
+            {% endif %}
+          </div>
+          <div style="display:flex;gap:0.3rem;flex-shrink:0">
+            {% if wf.enabled %}
+            <span class="badge success">On</span>
+            {% else %}
+            <span class="badge">Off</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <details class="col-edit" style="margin-top:0.6rem">
+          <summary class="btn small">Edit</summary>
+          <div class="col-edit-form" style="background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:0.85rem;margin-top:0.5rem">
+            <form method="post" class="form-grid" id="wf-edit-{{ wf.id }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="edit">
+              <input type="hidden" name="wf_id" value="{{ wf.id }}">
+              <label style="grid-column:1/-1">Name<input type="text" name="name" value="{{ wf.name }}" required></label>
+              <label>Module
+                <select name="trigger_entity" class="edit-entity" data-wfid="{{ wf.id }}">
+                  {% for et in entity_types %}<option value="{{ et }}"{% if et == wf.trigger_entity %} selected{% endif %}>{{ entity_labels[et] }}</option>{% endfor %}
+                </select>
+              </label>
+              <label>Event
+                <select name="trigger_event" class="edit-event" data-wfid="{{ wf.id }}">
+                  {% for et in entity_types %}{% for ev_key, ev_label, needs_val in trigger_events[et] %}
+                  <option value="{{ ev_key }}" data-entity="{{ et }}"{% if ev_key == wf.trigger_event and et == wf.trigger_entity %} selected{% endif %}>{{ ev_label }}</option>
+                  {% endfor %}{% endfor %}
+                </select>
+              </label>
+
+              {# Flexible condition #}
+              <div style="grid-column:1/-1">
+                <div class="tp-section-label" style="margin-bottom:0.3rem">Condition</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem">
+                  <label>Field
+                    <select name="cond_field" class="edit-cond-field" data-wfid="{{ wf.id }}">
+                      <option value="">— none —</option>
+                      {% for fkey, flabel, ftype in entity_fields.get(wf.trigger_entity, []) %}
+                      <option value="{{ fkey }}" data-ftype="{{ ftype }}"{% if cond and cond.get('field') == fkey %} selected{% endif %}>{{ flabel }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>Operator
+                    <select name="cond_op" class="edit-cond-op" data-wfid="{{ wf.id }}">
+                      {% set sel_ftype = 'text' %}
+                      {% for fkey, flabel, ftype in entity_fields.get(wf.trigger_entity, []) %}
+                        {% if cond and cond.get('field') == fkey %}{% set sel_ftype = ftype %}{% endif %}
+                      {% endfor %}
+                      {% for opkey, oplabel in condition_ops.get(sel_ftype, condition_ops['text']) %}
+                      <option value="{{ opkey }}"{% if cond and cond.get('op') == opkey %} selected{% endif %}>{{ oplabel }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>Value<input type="text" name="cond_value" value="{{ cond.get('value','') if cond else '' }}" placeholder="e.g. 7, Done"></label>
+                </div>
+              </div>
+
+              <label>Action
+                <select name="action_type" class="edit-action-type" data-wfid="{{ wf.id }}">
+                  {% for ak, al in workflow_actions %}<option value="{{ ak }}"{% if ak == wf.action_type %} selected{% endif %}>{{ al }}</option>{% endfor %}
+                </select>
+              </label>
+              <div style="grid-column:1/-1" class="edit-action-fields" data-wfid="{{ wf.id }}">
+                {% if wf.action_type == 'create_task' %}
+                <div class="form-grid">
+                  <label style="grid-column:1/-1">Task title template<input type="text" name="act_title" value="{{ cfg.get('title','') }}"></label>
+                  <label>Status<select name="act_status">{% for col in columns %}<option{% if col == cfg.get('status') %} selected{% endif %}>{{ col }}</option>{% endfor %}</select></label>
+                  <label>Priority<select name="act_priority">{% for p in priorities %}<option{% if p == cfg.get('priority') %} selected{% endif %}>{{ p }}</option>{% endfor %}</select></label>
+                  <label>Owner<input type="text" name="act_owner" value="{{ cfg.get('owner','') }}"></label>
+                  <label>Linked name<input type="text" name="act_related_name" value="{{ cfg.get('related_name','') }}"></label>
+                  <label style="grid-column:1/-1">Description<textarea name="act_description" style="min-height:44px">{{ cfg.get('description','') }}</textarea></label>
+                </div>
+                {% elif wf.action_type == 'update_task_status' %}
+                <div class="form-grid">
+                  <label>Move tasks to<select name="act_status">{% for col in columns %}<option{% if col == cfg.get('status') %} selected{% endif %}>{{ col }}</option>{% endfor %}</select></label>
+                  <label>Match related name<input type="text" name="act_related_name" value="{{ cfg.get('related_name','') }}"></label>
+                </div>
+                {% elif wf.action_type == 'send_alert' %}
+                <div class="form-grid">
+                  <label style="grid-column:1/-1">Alert title<input type="text" name="act_alert_title" value="{{ cfg.get('title','') }}"></label>
+                  <label>Severity<select name="act_alert_severity"><option value="info"{% if cfg.get('severity')=='info' %} selected{% endif %}>Info</option><option value="warning"{% if cfg.get('severity','warning')=='warning' %} selected{% endif %}>Warning</option><option value="danger"{% if cfg.get('severity')=='danger' %} selected{% endif %}>Danger</option></select></label>
+                  <label>Detail<input type="text" name="act_alert_detail" value="{{ cfg.get('detail','') }}"></label>
+                </div>
+                {% endif %}
+              </div>
+
+              <div style="display:flex;gap:0.4rem;grid-column:1/-1">
+                <button type="submit" class="btn small primary">Save</button>
+              </div>
+            </form>
+          </div>
+        </details>
+
+        <div style="display:flex;gap:0.3rem;margin-top:0.5rem">
+          <form method="post" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="toggle">
+            <input type="hidden" name="wf_id" value="{{ wf.id }}">
+            <button class="btn small{% if wf.enabled %} warning{% else %} success{% endif %}" type="submit">
+              {{ 'Disable' if wf.enabled else 'Enable' }}
+            </button>
+          </form>
+          <form method="post" class="inline" onsubmit="return confirm('Delete this workflow?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="wf_id" value="{{ wf.id }}">
+            <button class="btn small danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="subtle">No workflows yet. Create one on the left.</p>
+    {% endif %}
+
+    {% if recent_runs %}
+    <h3 style="margin-top:1.5rem">Recent runs</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Workflow</th><th>Result</th><th>Detail</th></tr></thead>
+        <tbody>
+          {% for run in recent_runs %}
+          <tr>
+            <td class="subtle" style="white-space:nowrap">{{ run.triggered_at.strftime('%d %b %H:%M') }}</td>
+            <td>{{ run.workflow.name if run.workflow else '—' }}</td>
+            <td>
+              {% if run.status == 'ok' %}
+              <span class="badge success">ok</span>
+              {% else %}
+              <span class="badge danger">error</span>
+              {% endif %}
+            </td>
+            <td class="subtle" style="font-size:0.82rem">{{ run.detail or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+(function () {
+  // ── New workflow form ──────────────────────────────────────────
+  const entitySel = document.getElementById('wf-entity');
+  const eventSel  = document.getElementById('wf-event');
+  const valRow    = document.getElementById('wf-val-row');
+  const valInput  = document.getElementById('wf-val-input');
+  const actionSel = document.getElementById('wf-action');
+  const condField = document.getElementById('wf-cond-field');
+  const condOp    = document.getElementById('wf-cond-op');
+  const condHint  = document.getElementById('wf-cond-hint');
+  const allEvents = Array.from(eventSel.options);
+
+  function refreshEvents() {
+    const entity = entitySel.value;
+    eventSel.innerHTML = '';
+    allEvents.filter(o => o.dataset.entity === entity).forEach(o => eventSel.appendChild(o.cloneNode(true)));
+    refreshValRow();
+    refreshCondFields();
+  }
+
+  function refreshValRow() {
+    const opt = eventSel.options[eventSel.selectedIndex];
+    const needs = opt && opt.dataset.needsVal === 'true';
+    valRow.style.display = needs ? '' : 'none';
+    valInput.required = needs;
+  }
+
+  function refreshCondFields() {
+    const entity = entitySel.value;
+    const fields = WF_ENTITY_FIELDS[entity] || [];
+    condField.innerHTML = '<option value="">— none —</option>';
+    fields.forEach(([key, label, ftype]) => {
+      const o = document.createElement('option');
+      o.value = key; o.textContent = label; o.dataset.ftype = ftype;
+      condField.appendChild(o);
+    });
+    refreshCondOps();
+  }
+
+  function refreshCondOps() {
+    const opt = condField.options[condField.selectedIndex];
+    const ftype = (opt && opt.dataset.ftype) || 'text';
+    const ops = WF_CONDITION_OPS[ftype] || WF_CONDITION_OPS['text'];
+    condOp.innerHTML = '';
+    ops.forEach(([key, label]) => {
+      const o = document.createElement('option');
+      o.value = key; o.textContent = label;
+      condOp.appendChild(o);
+    });
+    const isDate = ftype === 'date';
+    condHint.textContent = isDate ? 'For date operators: enter a number of days (e.g. 7) or a date (YYYY-MM-DD).' : '';
+  }
+
+  function refreshAction() {
+    document.querySelectorAll('.action-fields').forEach(el => el.style.display = 'none');
+    const v = actionSel.value.replace(/_/g, '-');
+    const target = document.getElementById('act-' + v);
+    if (target) target.style.display = '';
+  }
+
+  entitySel.addEventListener('change', refreshEvents);
+  eventSel.addEventListener('change', refreshValRow);
+  condField.addEventListener('change', refreshCondOps);
+  actionSel.addEventListener('change', refreshAction);
+  refreshEvents();
+  refreshAction();
+})();
+</script>
+{% endblock %}

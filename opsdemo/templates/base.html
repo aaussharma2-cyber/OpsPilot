@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en" data-theme="{{ ui_theme }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{{ title or 'OpsPilot Local' }}</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%233b82f6'/><text y='22' x='5' font-size='20' font-family='system-ui'>⚡</text></svg>">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ static_ver('app.css') }}">
+    <style>
+      .notif-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 17px;
+        height: 17px;
+        padding: 0 4px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        background: var(--red, #ef4444);
+        color: #fff;
+        border-radius: 9px;
+        margin-left: 4px;
+        vertical-align: middle;
+        line-height: 1;
+      }
+    </style>
+  </head>
+  <body>
+    {% if g.user %}
+    <header>
+      <div class="nav-wrap">
+        <div>
+          <div class="brand">OpsPilot Local</div>
+          <div class="subtle">Single-tenant operations workspace</div>
+        </div>
+        <nav>
+          <a href="{{ url_for('main.dashboard') }}" class="{% if request.endpoint == 'main.dashboard' %}active{% endif %}">Dashboard</a>
+          <a href="{{ url_for('main.tasks') }}" class="{% if request.endpoint == 'main.tasks' %}active{% endif %}">Tasks</a>
+          <a href="{{ url_for('main.sprint_list') }}" class="{% if request.endpoint in ['main.sprint_list','main.sprint_detail'] %}active{% endif %}">Sprints</a>
+          <a href="{{ url_for('main.crm') }}" class="{% if request.endpoint == 'main.crm' %}active{% endif %}">CRM</a>
+          <a href="{{ url_for('main.vendors') }}" class="{% if request.endpoint == 'main.vendors' %}active{% endif %}">Vendors</a>
+          <a href="{{ url_for('main.assets') }}" class="{% if request.endpoint == 'main.assets' %}active{% endif %}">Assets</a>
+          <a href="{{ url_for('main.inventory') }}" class="{% if request.endpoint == 'main.inventory' %}active{% endif %}">Inventory</a>
+          <a href="{{ url_for('main.invoices') }}" class="{% if request.endpoint == 'main.invoices' %}active{% endif %}">Invoices</a>
+          <a href="{{ url_for('main.renewals') }}" class="{% if request.endpoint == 'main.renewals' %}active{% endif %}">Renewals</a>
+          <a href="{{ url_for('main.sales') }}" class="{% if request.endpoint == 'main.sales' %}active{% endif %}">Sales</a>
+          <a href="{{ url_for('main.reports') }}" class="{% if request.endpoint and request.endpoint.startswith('main.report') %}active{% endif %}">Reports</a>
+          <a href="{{ url_for('main.notifications') }}" class="{% if request.endpoint == 'main.notifications' %}active{% endif %}" style="position:relative;">
+            Alerts{% if unread_notifications %}<span class="notif-badge">{{ unread_notifications }}</span>{% endif %}
+          </a>
+          <a href="{{ url_for('main.settings') }}" class="{% if request.endpoint and (request.endpoint.startswith('main.settings') or request.endpoint.startswith('main.settings_integration') or request.endpoint == 'main.settings_theme' or request.endpoint == 'main.audit_log') %}active{% endif %}">Settings</a>
+        </nav>
+        <form method="post" action="{{ url_for('main.logout') }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn small" type="submit">Log out</button>
+        </form>
+      </div>
+    </header>
+    {% endif %}
+    <main>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-list" id="flash-list">
+        {% for category, message in messages %}
+        <div class="flash {{ category }}" data-autohide="{{ 'false' if category == 'danger' else 'true' }}">
+          <span>{{ message }}</span>
+          <button class="flash-close" aria-label="Dismiss" type="button">✕</button>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+    {% if g.user %}
+    <footer>
+      <span>OpsPilot Local &mdash; single-tenant operations workspace</span>
+      <span style="margin-left:1.5rem;">Logged in as <strong>{{ g.user.username }}</strong> ({{ g.user.role }})</span>
+    </footer>
+    {% endif %}
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ static_ver('app.js') }}"></script>
+  </body>
+</html>

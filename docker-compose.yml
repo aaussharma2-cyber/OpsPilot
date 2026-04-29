@@ -1,0 +1,17 @@
+services:
+  opspilot:
+    build: .
+    container_name: opspilot-local
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-this-in-production}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+      DEMO_USERNAME: ${DEMO_USERNAME:-admin}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-ChangeMe123!}
+      ALERT_LOOKAHEAD_DAYS: ${ALERT_LOOKAHEAD_DAYS:-30}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SHOPIFY_API_VERSION: ${SHOPIFY_API_VERSION:-2026-04}
+    volumes:
+      - ./instance:/app/instance
+    restart: unless-stopped
