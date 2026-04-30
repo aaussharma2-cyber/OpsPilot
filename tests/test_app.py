@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
 
 import pytest
 
-from opsdemo import create_app
+from opsdemo import _try_exec, create_app
 from opsdemo import services
 from opsdemo.models import AlertLog, AuditLog, Contact, InventoryItem, Invoice, Renewal, Sale, Task, db
 
@@ -80,6 +80,24 @@ def test_shopify_domain_normalization():
     assert services.normalize_shopify_domain("https://Demo-Store.myshopify.com/admin") == "demo-store.myshopify.com"
     assert services.validate_shopify_domain("demo-store.myshopify.com")
     assert not services.validate_shopify_domain("demo-store.myshopify.com.evil.test")
+
+
+def test_migration_helper_rolls_back_failed_statement():
+    class FailingConn:
+        rolled_back = False
+
+        def execute(self, statement):
+            raise RuntimeError("simulated failed DDL")
+
+        def commit(self):
+            raise AssertionError("commit should not run after failed execute")
+
+        def rollback(self):
+            self.rolled_back = True
+
+    conn = FailingConn()
+    _try_exec(conn, "ALTER TABLE missing ADD COLUMN example INTEGER")
+    assert conn.rolled_back is True
 
 
 def test_login_seed_dashboard(client):

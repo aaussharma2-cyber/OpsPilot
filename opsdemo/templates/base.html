@@ -113,9 +113,7 @@
         </div>
         {% endif %}
         {% endwith %}
-        {% block content %}{% endblock %}
-      </main>
-    </div>
+        
 
     {% else %}
     {# ── Unauthenticated: full-page ── #}
@@ -132,8 +130,12 @@
       </div>
       {% endif %}
       {% endwith %}
+    {% endif %}
+
       {% block content %}{% endblock %}
     </main>
+    {% if g.user %}
+    </div>
     {% endif %}
 
     <script src="{{ url_for('static', filename='app.js') }}?v={{ static_ver('app.js') }}"></script>

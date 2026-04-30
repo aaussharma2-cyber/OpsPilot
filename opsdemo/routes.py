@@ -1919,7 +1919,7 @@ def renewal_send_invoice(renewal_id: int):
         smtp_cfg = get_smtp_config()
         if not _email_configured(smtp_cfg):
             log_audit("email_send", "renewals", status="error", related_record=invoice.reference,
-                      message=f"Email not sent for {invoice.reference} — email provider not configured. "
+                      message=f"Email not sent for {invoice.reference} — SMTP/email provider not configured. "
                                f"Recipient: {recipient_email}, subject: 'Invoice {invoice.reference}'")
             flash(f"Invoice {invoice.reference} created, but email not sent — email is not configured. "
                   "Configure it in Settings → Email.", "warning")

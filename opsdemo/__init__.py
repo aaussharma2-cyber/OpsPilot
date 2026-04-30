@@ -72,7 +72,10 @@ def _try_exec(conn, sql: str) -> None:
         conn.execute(db.text(sql))
         conn.commit()
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def _ensure_default_org(conn) -> None:
@@ -106,15 +109,24 @@ def _ensure_default_org(conn) -> None:
                 conn.execute(db.text(f"UPDATE {tbl} SET org_id={org_id} WHERE org_id IS NULL"))
                 conn.commit()
             except Exception:
-                pass
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
         # Upgrade org_admin role
         try:
             conn.execute(db.text("UPDATE app_user SET role='org_admin' WHERE role='admin'"))
             conn.commit()
         except Exception:
-            pass
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 _SECURITY_ALERT_SPECS = [
