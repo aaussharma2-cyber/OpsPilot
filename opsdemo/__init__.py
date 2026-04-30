@@ -28,25 +28,24 @@ def _run_migrations(app: Flask) -> None:
     with engine.connect() as conn:
         _safe_add = lambda sql: _try_exec(conn, sql)
 
+        # Rename reserved-word table "user" → app_user (idempotent: fails silently if already done)
+        _safe_add('ALTER TABLE "user" RENAME TO app_user')
+
         # Legacy columns
         _safe_add("ALTER TABLE task ADD COLUMN sprint_id INTEGER REFERENCES sprint(id)")
         _safe_add("ALTER TABLE dashboard_widget ADD COLUMN report_id INTEGER REFERENCES dashboard_report(id) ON DELETE CASCADE")
         _safe_add("ALTER TABLE renewal ADD COLUMN contact_name VARCHAR(120)")
         _safe_add("ALTER TABLE renewal ADD COLUMN contact_email VARCHAR(120)")
 
-        # Multi-tenancy: organization table is created by db.create_all()
-        # Add org_id to all data tables
-        org_fk_tables = [
-            "user", "sprint", "task", "contact", "vendor", "asset",
+        # Multi-tenancy: add org_id to all data tables
+        for tbl in [
+            "app_user", "sprint", "task", "contact", "vendor", "asset",
             "inventory_item", "invoice", "renewal", "sale",
             "board_column", "field_definition", "workflow", "alert_log",
             "dashboard_widget", "dashboard_report", "integration_config",
             "sync_log", "audit_log",
-        ]
-        for tbl in org_fk_tables:
-            # "user" is a reserved word in PostgreSQL — must be quoted
-            quoted = f'"{tbl}"' if tbl == "user" else tbl
-            _safe_add(f"ALTER TABLE {quoted} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
+        ]:
+            _safe_add(f"ALTER TABLE {tbl} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
 
         # Organization brand columns
         _safe_add("ALTER TABLE organization ADD COLUMN logo_path VARCHAR(255)")
@@ -54,19 +53,15 @@ def _run_migrations(app: Flask) -> None:
         _safe_add("ALTER TABLE organization ADD COLUMN pdf_footer_text VARCHAR(200)")
         _safe_add("ALTER TABLE organization ADD COLUMN email_from_name VARCHAR(120)")
 
-        # User model new columns (quote "user" — reserved word in PostgreSQL)
-        _safe_add('ALTER TABLE "user" ADD COLUMN email VARCHAR(120)')
-        _safe_add('ALTER TABLE "user" ADD COLUMN is_active BOOLEAN DEFAULT TRUE')
+        # User model new columns
+        _safe_add("ALTER TABLE app_user ADD COLUMN email VARCHAR(120)")
+        _safe_add("ALTER TABLE app_user ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
 
         # TaskHistory: changed_by
         _safe_add("ALTER TABLE task_history ADD COLUMN changed_by VARCHAR(80)")
 
         # Migrate existing admin role → org_admin
-        try:
-            conn.execute(db.text('UPDATE "user" SET role=\'org_admin\' WHERE role=\'admin\''))
-            conn.commit()
-        except Exception:
-            pass
+        _safe_add("UPDATE app_user SET role='org_admin' WHERE role='admin'")
 
         # Create default organization and assign existing users/data to it
         _ensure_default_org(conn)
@@ -100,23 +95,21 @@ def _ensure_default_org(conn) -> None:
             org_id = row[0]
 
         # Assign all users/data without an org
-        tables = [
-            "user", "sprint", "task", "contact", "vendor", "asset",
+        for tbl in [
+            "app_user", "sprint", "task", "contact", "vendor", "asset",
             "inventory_item", "invoice", "renewal", "sale",
             "board_column", "field_definition", "workflow", "alert_log",
             "dashboard_widget", "dashboard_report", "integration_config",
             "sync_log", "audit_log",
-        ]
-        for tbl in tables:
+        ]:
             try:
-                quoted = f'"{tbl}"' if tbl == "user" else tbl
-                conn.execute(db.text(f"UPDATE {quoted} SET org_id={org_id} WHERE org_id IS NULL"))
+                conn.execute(db.text(f"UPDATE {tbl} SET org_id={org_id} WHERE org_id IS NULL"))
                 conn.commit()
             except Exception:
                 pass
         # Upgrade org_admin role
         try:
-            conn.execute(db.text('UPDATE "user" SET role=\'org_admin\' WHERE role=\'admin\''))
+            conn.execute(db.text("UPDATE app_user SET role='org_admin' WHERE role='admin'"))
             conn.commit()
         except Exception:
             pass
