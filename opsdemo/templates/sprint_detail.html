@@ -96,6 +96,29 @@
 {% endif %}
 {% endfor %}
 
+{# ── Velocity & Priority charts ───────────────────────────────────── #}
+{% if velocity_data or priority_counts %}
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem;margin-bottom:1rem">
+
+  {% if velocity_data %}
+  <div class="panel">
+    <h2 style="margin-top:0;font-size:1rem">Sprint Velocity</h2>
+    <p class="subtle" style="font-size:0.82rem;margin:0 0 1rem">Tasks completed per sprint (last 8)</p>
+    <canvas id="velocityChart" height="180"></canvas>
+  </div>
+  {% endif %}
+
+  {% if priority_counts %}
+  <div class="panel">
+    <h2 style="margin-top:0;font-size:1rem">Priority Breakdown</h2>
+    <p class="subtle" style="font-size:0.82rem;margin:0 0 1rem">Tasks in this sprint by priority</p>
+    <canvas id="priorityChart" height="180"></canvas>
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}
+
 {# ── Task panel overlay ───────────────────────────────────────────── #}
 <div id="tp-overlay" class="tp-overlay"></div>
 <aside id="task-panel" class="task-panel" aria-hidden="true">
@@ -105,4 +128,68 @@
   </div>
   <div id="tp-body" class="tp-body"><p class="subtle" style="padding:1rem">Loading…</p></div>
 </aside>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  const isDark = document.documentElement.dataset.theme !== 'light';
+  const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
+  const labelColor = isDark ? '#94a3b8' : '#64748b';
+
+  {% if velocity_data %}
+  const vData = {{ velocity_data | tojson }};
+  new Chart(document.getElementById('velocityChart'), {
+    type: 'bar',
+    data: {
+      labels: vData.map(d => d.name),
+      datasets: [
+        {
+          label: 'Completed',
+          data: vData.map(d => d.done),
+          backgroundColor: 'rgba(16,185,129,0.7)',
+          borderRadius: 4,
+        },
+        {
+          label: 'Total',
+          data: vData.map(d => d.total),
+          backgroundColor: 'rgba(59,130,246,0.25)',
+          borderRadius: 4,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: labelColor, font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: labelColor, font: { size: 10 } }, grid: { color: gridColor } },
+        y: { ticks: { color: labelColor, font: { size: 10 } }, grid: { color: gridColor }, beginAtZero: true }
+      }
+    }
+  });
+  {% endif %}
+
+  {% if priority_counts %}
+  const pData = {{ priority_counts | tojson }};
+  const pOrder = ['Critical','High','Medium','Low'];
+  const pColors = ['rgba(239,68,68,0.8)','rgba(245,158,11,0.8)','rgba(59,130,246,0.8)','rgba(100,116,139,0.8)'];
+  new Chart(document.getElementById('priorityChart'), {
+    type: 'doughnut',
+    data: {
+      labels: pOrder.filter(p => pData[p]),
+      datasets: [{
+        data: pOrder.filter(p => pData[p]).map(p => pData[p]),
+        backgroundColor: pOrder.filter(p => pData[p]).map((p,i) => pColors[pOrder.indexOf(p)]),
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'right', labels: { color: labelColor, font: { size: 11 }, boxWidth: 12 } }
+      }
+    }
+  });
+  {% endif %}
+})();
+</script>
 {% endblock %}

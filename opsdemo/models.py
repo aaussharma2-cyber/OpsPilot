@@ -20,11 +20,72 @@ class TimestampMixin:
     )
 
 
+class Organization(db.Model):
+    __tablename__ = "organization"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    slug = db.Column(db.String(60), unique=True, nullable=False, index=True)
+    plan = db.Column(db.String(20), nullable=False, default="free")  # free / pro / enterprise
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+
+    # Plan limits
+    _PLAN_USER_LIMITS = {"free": 2, "pro": 25, "enterprise": 9999}
+    _PLAN_RECORD_LIMITS = {"free": 5, "pro": 9999, "enterprise": 9999}
+
+    @property
+    def max_users(self) -> int:
+        return self._PLAN_USER_LIMITS.get(self.plan, 2)
+
+    @property
+    def max_records(self) -> int:
+        return self._PLAN_RECORD_LIMITS.get(self.plan, 5)
+
+    @property
+    def plan_label(self) -> str:
+        return self.plan.capitalize()
+
+
 class User(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=True, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(30), nullable=False, default="admin")
+    # Roles: super_admin > org_admin > member > viewer
+    # Legacy: "admin" treated as org_admin, "manager" as member
+    role = db.Column(db.String(30), nullable=False, default="org_admin")
+    org_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organization.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    org = db.relationship("Organization", foreign_keys=[org_id])
+
+    @property
+    def display_role(self) -> str:
+        mapping = {
+            "super_admin": "Super Admin",
+            "org_admin": "Admin",
+            "admin": "Admin",
+            "member": "Member",
+            "manager": "Member",
+            "viewer": "Viewer",
+        }
+        return mapping.get(self.role, self.role.capitalize())
+
+    @property
+    def is_org_admin(self) -> bool:
+        return self.role in ("org_admin", "admin", "super_admin")
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.role == "super_admin"
+
+    @property
+    def can_write(self) -> bool:
+        return self.role not in ("viewer",)
 
 
 class Sprint(db.Model):
@@ -35,6 +96,7 @@ class Sprint(db.Model):
     end_date = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="Planning")  # Planning / Active / Completed
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class Task(TimestampMixin, db.Model):
@@ -49,6 +111,7 @@ class Task(TimestampMixin, db.Model):
     related_name = db.Column(db.String(120), nullable=True)
     sprint_id = db.Column(db.Integer, db.ForeignKey('sprint.id', ondelete='SET NULL'), nullable=True, index=True)
     sprint = db.relationship('Sprint', backref='tasks', foreign_keys=[sprint_id])
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class Contact(TimestampMixin, db.Model):
@@ -60,6 +123,7 @@ class Contact(TimestampMixin, db.Model):
     phone = db.Column(db.String(50), nullable=True)
     stage = db.Column(db.String(30), nullable=False, default="New")
     notes = db.Column(db.Text, nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class Vendor(TimestampMixin, db.Model):
@@ -72,6 +136,7 @@ class Vendor(TimestampMixin, db.Model):
     contract_end = db.Column(db.Date, nullable=True, index=True)
     rating = db.Column(db.Integer, nullable=False, default=3)
     notes = db.Column(db.Text, nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class Asset(TimestampMixin, db.Model):
@@ -85,11 +150,12 @@ class Asset(TimestampMixin, db.Model):
     current_value = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     expiry_date = db.Column(db.Date, nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class InventoryItem(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    sku = db.Column(db.String(60), nullable=False, unique=True, index=True)
+    sku = db.Column(db.String(60), nullable=False, index=True)
     name = db.Column(db.String(120), nullable=False)
     category = db.Column(db.String(80), nullable=True)
     warehouse = db.Column(db.String(80), nullable=False, default="Main")
@@ -99,18 +165,26 @@ class InventoryItem(TimestampMixin, db.Model):
     sale_price = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     expiry_date = db.Column(db.Date, nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
+    __table_args__ = (
+        db.UniqueConstraint("sku", "org_id", name="uq_sku_org"),
+    )
 
 
 class Invoice(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     kind = db.Column(db.String(20), nullable=False, default="sales", index=True)
     party_name = db.Column(db.String(120), nullable=False)
-    reference = db.Column(db.String(80), nullable=False, unique=True)
+    reference = db.Column(db.String(80), nullable=False)
     amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     due_date = db.Column(db.Date, nullable=False, index=True)
     status = db.Column(db.String(20), nullable=False, default="Unpaid", index=True)
     paid_on = db.Column(db.Date, nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
+    __table_args__ = (
+        db.UniqueConstraint("reference", "org_id", name="uq_invoice_ref_org"),
+    )
 
 
 class Renewal(TimestampMixin, db.Model):
@@ -125,17 +199,22 @@ class Renewal(TimestampMixin, db.Model):
     notes = db.Column(db.Text, nullable=True)
     contact_name = db.Column(db.String(120), nullable=True)
     contact_email = db.Column(db.String(120), nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class Sale(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    order_ref = db.Column(db.String(80), nullable=False, unique=True)
+    order_ref = db.Column(db.String(80), nullable=False)
     customer_name = db.Column(db.String(120), nullable=False)
     order_date = db.Column(db.Date, nullable=False, index=True, default=date.today)
     channel = db.Column(db.String(80), nullable=True)
     revenue = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     cost = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     quantity = db.Column(db.Integer, nullable=False, default=1)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
+    __table_args__ = (
+        db.UniqueConstraint("order_ref", "org_id", name="uq_sale_ref_org"),
+    )
 
     @property
     def margin(self):
@@ -149,15 +228,20 @@ class TaskHistory(db.Model):
     old_value = db.Column(db.Text, nullable=True)
     new_value = db.Column(db.Text, nullable=True)
     changed_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    changed_by = db.Column(db.String(80), nullable=True)
 
 
 # ── Customisation models ────────────────────────────────────────────────────
 
 class BoardColumn(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False, unique=True)
+    name = db.Column(db.String(50), nullable=False)
     position = db.Column(db.Integer, nullable=False, default=0)
     color = db.Column(db.String(20), nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
+    __table_args__ = (
+        db.UniqueConstraint("name", "org_id", name="uq_col_name_org"),
+    )
 
 
 class FieldDefinition(db.Model):
@@ -169,8 +253,9 @@ class FieldDefinition(db.Model):
     options = db.Column(db.Text, nullable=True)  # JSON array for select fields
     position = db.Column(db.Integer, nullable=False, default=0)
     required = db.Column(db.Boolean, nullable=False, default=False)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
     __table_args__ = (
-        db.UniqueConstraint('entity_type', 'field_key', name='uq_field_entity_key'),
+        db.UniqueConstraint('entity_type', 'field_key', 'org_id', name='uq_field_entity_key_org'),
     )
 
     @property
@@ -208,6 +293,7 @@ class Workflow(TimestampMixin, db.Model):
     trigger_condition = db.Column(db.Text, nullable=True)  # JSON
     action_type = db.Column(db.String(30), nullable=False)
     action_config = db.Column(db.Text, nullable=True)   # JSON
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class WorkflowRun(db.Model):
@@ -234,6 +320,7 @@ class AlertLog(db.Model):
     source = db.Column(db.String(100), nullable=True)  # workflow name or system
     is_read = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class DashboardWidget(db.Model):
@@ -245,6 +332,7 @@ class DashboardWidget(db.Model):
     report_id = db.Column(db.Integer, db.ForeignKey('dashboard_report.id', ondelete='CASCADE'), nullable=True)
     report = db.relationship('DashboardReport', foreign_keys=[report_id])
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class DashboardReport(db.Model):
@@ -256,6 +344,7 @@ class DashboardReport(db.Model):
     metric = db.Column(db.String(40), nullable=False, default='count')
     chart_type = db.Column(db.String(20), nullable=False, default='bar')
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class IntegrationConfig(db.Model):
@@ -264,8 +353,9 @@ class IntegrationConfig(db.Model):
     integration = db.Column(db.String(40), nullable=False, index=True)
     key = db.Column(db.String(80), nullable=False)
     value = db.Column(db.Text, nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
     __table_args__ = (
-        db.UniqueConstraint('integration', 'key', name='uq_integration_key'),
+        db.UniqueConstraint('integration', 'key', 'org_id', name='uq_integration_key_org'),
     )
 
 
@@ -278,6 +368,7 @@ class SyncLog(db.Model):
     status = db.Column(db.String(20), nullable=False, default='ok')
     error = db.Column(db.Text, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class AuditLog(db.Model):
@@ -290,3 +381,4 @@ class AuditLog(db.Model):
     status = db.Column(db.String(20), nullable=False, default='ok')  # ok / error / warning
     message = db.Column(db.Text, nullable=True)
     related_record = db.Column(db.String(120), nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="SET NULL"), nullable=True, index=True)

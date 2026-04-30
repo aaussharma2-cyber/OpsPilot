@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="panel">
+      <div style="text-align:center;margin-bottom:1.5rem">
+        <div style="font-size:2rem;margin-bottom:0.5rem">⚡</div>
+        <h1 style="margin:0;font-size:1.5rem">Create your workspace</h1>
+        <p class="subtle" style="margin:0.4rem 0 0;font-size:0.92rem">Free plan — 2 users, 5 records per table</p>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div style="margin-bottom:1rem">
+        {% for cat, msg in messages %}
+        <div class="flash {{ cat }}" style="margin-bottom:0.4rem"><span>{{ msg }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <form method="post" class="form-grid" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label style="grid-column:1/-1">
+          Organisation name
+          <input type="text" name="org_name" required placeholder="Acme Corp" autofocus minlength="2" maxlength="120">
+        </label>
+        <label>
+          Username
+          <input type="text" name="username" required placeholder="johndoe" minlength="3" maxlength="80" autocomplete="username">
+        </label>
+        <label>
+          Email
+          <input type="email" name="email" required placeholder="you@company.com" autocomplete="email">
+        </label>
+        <label>
+          Password
+          <input type="password" name="password" required minlength="10" placeholder="Min 10 characters" autocomplete="new-password">
+        </label>
+        <label>
+          Confirm password
+          <input type="password" name="password2" required minlength="10" placeholder="Repeat password" autocomplete="new-password">
+        </label>
+
+        <div style="grid-column:1/-1;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:0.85rem 1rem;font-size:0.88rem">
+          <strong>Free plan includes:</strong>
+          <ul style="margin:0.4rem 0 0;padding-left:1.2rem;color:var(--muted)">
+            <li>Up to 2 users per organisation</li>
+            <li>Up to 5 records per module</li>
+            <li>All features: Tasks, CRM, Invoices, Reports, Sprints</li>
+          </ul>
+        </div>
+
+        <button type="submit" class="btn primary" style="grid-column:1/-1;justify-content:center;padding:0.75rem">
+          Create workspace
+        </button>
+      </form>
+
+      <p style="text-align:center;margin:1rem 0 0;font-size:0.9rem;color:var(--muted)">
+        Already have an account? <a href="{{ url_for('main.login') }}">Sign in</a>
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

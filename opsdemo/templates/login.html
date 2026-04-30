@@ -1,40 +1,41 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Login · OpsPilot Local</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-  </head>
-  <body>
-    <div class="login-wrap">
-      <div class="panel login-card">
-        <h1 style="margin-top: 0;">OpsPilot Local</h1>
-        <p class="subtle">Local self-hosted operations demo with kanban, CRM, inventory, invoicing, renewals, and dashboards.</p>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="flash-list">
-          {% for category, message in messages %}
-          <div class="flash {{ category }}">{{ message }}</div>
-          {% endfor %}
-        </div>
-        {% endif %}
-        {% endwith %}
-        <form method="post" class="form-grid">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label>Username
-            <input type="text" name="username" autocomplete="username" required>
-          </label>
-          <label>Password
-            <input type="password" name="password" autocomplete="current-password" required>
-          </label>
-          <button type="submit" class="btn primary">Sign in</button>
-        </form>
-        <div class="subtle" style="margin-top: 1rem; font-size: 0.82rem; text-align: center;">
-          First-run credentials are set via <code>DEMO_USERNAME</code> and <code>DEMO_PASSWORD</code> environment variables.
-        </div>
+{% extends 'base.html' %}
+{% block content %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="panel">
+      <div style="text-align:center;margin-bottom:1.5rem">
+        <div style="font-size:2rem;margin-bottom:0.5rem">⚡</div>
+        <h1 style="margin:0;font-size:1.5rem;font-weight:700">OpsPilot</h1>
+        <p class="subtle" style="margin:0.35rem 0 0;font-size:0.88rem">Enterprise operations workspace</p>
       </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div style="margin-bottom:1rem">
+        {% for category, message in messages %}
+        <div class="flash {{ category }}" style="margin-bottom:0.4rem"><span>{{ message }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <form method="post" class="form-grid" data-disable-on-submit>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label style="grid-column:1/-1">
+          Username
+          <input type="text" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label style="grid-column:1/-1">
+          Password
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="btn primary" style="grid-column:1/-1;justify-content:center;padding:0.7rem">Sign in</button>
+      </form>
+
+      <p style="text-align:center;margin:1rem 0 0;font-size:0.88rem;color:var(--muted)">
+        Don't have an account? <a href="{{ url_for('main.signup') }}">Create workspace</a>
+      </p>
     </div>
-  </body>
-</html>
+  </div>
+</div>
+{% endblock %}

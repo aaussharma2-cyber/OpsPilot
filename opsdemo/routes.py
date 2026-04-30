@@ -21,12 +21,15 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
-from . import admin_required, login_required, verify_csrf
+from . import (
+    admin_required, login_required, super_admin_required, verify_csrf,
+    check_record_limit, check_user_limit,
+)
 from werkzeug.security import generate_password_hash
 
 from .models import (
     AlertLog, AuditLog, Asset, BoardColumn, Contact, DashboardReport, DashboardWidget,
-    FieldDefinition, FieldValue, IntegrationConfig, InventoryItem, Invoice,
+    FieldDefinition, FieldValue, IntegrationConfig, InventoryItem, Invoice, Organization,
     Renewal, Sale, Sprint, SyncLog, Task, TaskHistory, User, Vendor,
     Workflow, WorkflowRun, db,
 )
@@ -155,6 +158,89 @@ def logout():
     session.clear()
     flash("Logged out.", "success")
     return redirect(url_for("main.login"))
+
+
+@bp.route("/signup", methods=["GET", "POST"])
+def signup():
+    if g.get("user"):
+        return redirect(url_for("main.dashboard"))
+    if request.method == "POST":
+        verify_csrf()
+        org_name = request.form.get("org_name", "").strip()
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        password2 = request.form.get("password2", "")
+
+        errors = []
+        if not org_name or len(org_name) < 2:
+            errors.append("Organisation name must be at least 2 characters.")
+        if not username or len(username) < 3:
+            errors.append("Username must be at least 3 characters.")
+        if not email or "@" not in email:
+            errors.append("Valid email address is required.")
+        if len(password) < 10:
+            errors.append("Password must be at least 10 characters.")
+        if password != password2:
+            errors.append("Passwords do not match.")
+        if User.query.filter_by(username=username).first():
+            errors.append("Username already taken.")
+        if User.query.filter_by(email=email).first():
+            errors.append("An account with that email already exists.")
+
+        if errors:
+            for e in errors:
+                flash(e, "danger")
+            return render_template("signup.html")
+
+        # Create org slug
+        base_slug = slugify(org_name)[:50] or "org"
+        slug = base_slug
+        n = 1
+        while Organization.query.filter_by(slug=slug).first():
+            slug = f"{base_slug}-{n}"
+            n += 1
+
+        org = Organization(name=org_name, slug=slug, plan="free", is_active=True)
+        db.session.add(org)
+        db.session.flush()
+
+        user = User(
+            username=username,
+            email=email,
+            role="org_admin",
+            org_id=org.id,
+            is_active=True,
+        )
+        user.password_hash = generate_password_hash(password)
+        db.session.add(user)
+        db.session.commit()
+
+        log_audit("signup", "auth", status="ok",
+                  message=f"New organisation '{org_name}' created by '{username}'")
+        flash(f"Welcome to OpsPilot! Your organisation '{org_name}' is ready.", "success")
+        session.clear()
+        session.permanent = True
+        session["user_id"] = user.id
+        session["csrf_token"] = secrets.token_hex(16)
+        return redirect(url_for("main.dashboard"))
+
+    return render_template("signup.html")
+
+
+# ── Tier limit helper ────────────────────────────────────────────────────────
+
+def _tier_guard(model_class):
+    """Flash an error and return True if the org is at its free-tier record limit."""
+    org_id = g.user.org_id if g.user else None
+    allowed, current, limit = check_record_limit(model_class, org_id)
+    if not allowed:
+        flash(
+            f"Free plan limit reached ({current}/{limit} records). "
+            "Upgrade to Pro to add more.",
+            "warning",
+        )
+    return not allowed
 
 
 @bp.route("/seed", methods=["POST"])
@@ -597,6 +683,8 @@ def tasks():
     field_defs = get_field_defs("task")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Task):
+            return redirect(url_for("main.tasks"))
         title = request.form.get("title", "").strip()
         if not title:
             flash("Task title is required.", "danger")
@@ -971,6 +1059,12 @@ def sprint_detail(sprint_id: int):
     done = sum(1 for t in tasks if t.status in ("Done", "Completed"))
     field_defs = get_field_defs("task")
     fv_map = get_field_values_map("task", [t.id for t in tasks])
+    org_id = g.user.org_id if g.user else None
+    velocity_data = _sprint_velocity_data(org_id)
+    # Priority breakdown for this sprint
+    priority_counts = {}
+    for t in tasks:
+        priority_counts[t.priority] = priority_counts.get(t.priority, 0) + 1
     return render_template(
         "sprint_detail.html",
         sprint=sprint,
@@ -984,6 +1078,8 @@ def sprint_detail(sprint_id: int):
         field_defs=field_defs,
         fv_map=fv_map,
         priorities=PRIORITIES,
+        velocity_data=velocity_data,
+        priority_counts=priority_counts,
     )
 
 
@@ -995,6 +1091,8 @@ def crm():
     field_defs = get_field_defs("contact")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Contact):
+            return redirect(url_for("main.crm"))
         name = request.form.get("name", "").strip()
         kind = request.form.get("kind", "lead")
         if not name:
@@ -1080,6 +1178,8 @@ def vendors():
     field_defs = get_field_defs("vendor")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Vendor):
+            return redirect(url_for("main.vendors"))
         name = request.form.get("name", "").strip()
         if not name:
             flash("Vendor name is required.", "danger")
@@ -1127,6 +1227,8 @@ def assets():
     field_defs = get_field_defs("asset")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Asset):
+            return redirect(url_for("main.assets"))
         name = request.form.get("name", "").strip()
         if not name:
             flash("Asset name is required.", "danger")
@@ -1213,6 +1315,8 @@ def inventory():
     field_defs = get_field_defs("inventory")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(InventoryItem):
+            return redirect(url_for("main.inventory"))
         sku = request.form.get("sku", "").strip().upper()
         name = request.form.get("name", "").strip()
         if not sku or not name:
@@ -1287,6 +1391,8 @@ def invoices():
     field_defs = get_field_defs("invoice")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Invoice):
+            return redirect(url_for("main.invoices"))
         reference = request.form.get("reference", "").strip().upper()
         party_name = request.form.get("party_name", "").strip()
         due_date = request.form.get("due_date")
@@ -1666,6 +1772,8 @@ def renewals():
     field_defs = get_field_defs("renewal")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Renewal):
+            return redirect(url_for("main.renewals"))
         title = request.form.get("title", "").strip()
         renew_on = request.form.get("renew_on")
         if not title or not renew_on:
@@ -2072,6 +2180,8 @@ def sales():
     field_defs = get_field_defs("sale")
     if request.method == "POST":
         verify_csrf()
+        if _tier_guard(Sale):
+            return redirect(url_for("main.sales"))
         order_ref = request.form.get("order_ref", "").strip().upper()
         customer_name = request.form.get("customer_name", "").strip()
         order_date = request.form.get("order_date")
@@ -2522,6 +2632,80 @@ def settings_users():
 
         return redirect(url_for("main.settings_users"))
 
-    users = User.query.order_by(User.username.asc()).all()
-    roles = ["admin", "manager", "viewer"]
+    users = User.query.filter_by(org_id=g.user.org_id).order_by(User.username.asc()).all()
+    roles = ["org_admin", "member", "viewer"]
     return render_template("settings_users.html", users=users, roles=roles)
+
+
+# ── Super Admin (platform level) ─────────────────────────────────────────────
+
+@bp.route("/platform/admin")
+@super_admin_required
+def platform_admin():
+    orgs = Organization.query.order_by(Organization.created_at.desc()).all()
+    total_users = User.query.count()
+    total_orgs = Organization.query.count()
+    free_orgs = Organization.query.filter_by(plan="free").count()
+    recent_signups = User.query.order_by(User.created_at.desc()).limit(10).all()
+    return render_template(
+        "platform_admin.html",
+        orgs=orgs,
+        total_users=total_users,
+        total_orgs=total_orgs,
+        free_orgs=free_orgs,
+        recent_signups=recent_signups,
+    )
+
+
+@bp.route("/platform/admin/orgs/<int:org_id>/toggle", methods=["POST"])
+@super_admin_required
+def platform_org_toggle(org_id: int):
+    verify_csrf()
+    org = db.session.get(Organization, org_id)
+    if org:
+        org.is_active = not org.is_active
+        db.session.commit()
+        state = "activated" if org.is_active else "suspended"
+        flash(f"Organisation '{org.name}' {state}.", "success")
+        log_audit("org_toggle", "admin", related_record=org.name,
+                  message=f"Org '{org.name}' {state} by super admin")
+    return redirect(url_for("main.platform_admin"))
+
+
+@bp.route("/platform/admin/orgs/<int:org_id>/plan", methods=["POST"])
+@super_admin_required
+def platform_org_plan(org_id: int):
+    verify_csrf()
+    org = db.session.get(Organization, org_id)
+    if org:
+        new_plan = request.form.get("plan", "free")
+        if new_plan in ("free", "pro", "enterprise"):
+            org.plan = new_plan
+            db.session.commit()
+            flash(f"'{org.name}' plan updated to {new_plan}.", "success")
+            log_audit("org_plan_change", "admin", related_record=org.name,
+                      message=f"Org '{org.name}' plan changed to '{new_plan}' by super admin")
+    return redirect(url_for("main.platform_admin"))
+
+
+# ── Sprint velocity data ──────────────────────────────────────────────────────
+
+def _sprint_velocity_data(org_id) -> list[dict]:
+    """Return velocity (tasks completed) for last 8 completed sprints."""
+    q = Sprint.query.filter_by(status="Completed")
+    if org_id:
+        q = q.filter_by(org_id=org_id)
+    sprints = q.order_by(Sprint.end_date.desc()).limit(8).all()
+    result = []
+    for s in reversed(sprints):
+        done = Task.query.filter_by(sprint_id=s.id).filter(
+            Task.status.in_(["Done", "Completed"])
+        ).count()
+        total = Task.query.filter_by(sprint_id=s.id).count()
+        result.append({
+            "name": s.name,
+            "done": done,
+            "total": total,
+            "end_date": s.end_date.isoformat() if s.end_date else "",
+        })
+    return result
