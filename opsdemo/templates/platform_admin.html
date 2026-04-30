@@ -65,7 +65,7 @@
               {{ 'Active' if org.is_active else 'Suspended' }}
             </span>
           </td>
-          <td class="subtle">{{ org.max_users }}</td>
+          <td class="subtle">{{ user_count }} / {{ org.max_users }}</td>
           <td class="subtle" style="font-size:0.82rem">{{ org.created_at.strftime('%d %b %Y') if org.created_at else '—' }}</td>
           <td>
             <form method="post" action="{{ url_for('main.platform_org_toggle', org_id=org.id) }}" style="display:inline">

@@ -1,6 +1,29 @@
 (function () {
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
 
+  // ── Mobile sidebar toggle ───────────────────────────────────────────────
+  const sidebarToggle  = document.getElementById('sidebar-toggle');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+  const sidebar        = document.getElementById('sidebar');
+
+  function openSidebar() {
+    sidebar?.classList.add('is-open');
+    sidebarOverlay?.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeSidebar() {
+    sidebar?.classList.remove('is-open');
+    sidebarOverlay?.classList.remove('is-open');
+    document.body.style.overflow = '';
+  }
+
+  sidebarToggle?.addEventListener('click', openSidebar);
+  sidebarOverlay?.addEventListener('click', closeSidebar);
+  // Close on nav link tap
+  sidebar?.querySelectorAll('.sidebar-link').forEach(link =>
+    link.addEventListener('click', closeSidebar)
+  );
+
   // ── Kanban drag-and-drop ────────────────────────────────────────────────
   const cards = document.querySelectorAll('article[data-task-id]');
   const cols  = document.querySelectorAll('[data-status-column]');

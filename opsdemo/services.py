@@ -18,6 +18,7 @@ from .models import (
     IntegrationConfig, InventoryItem, Invoice, Renewal, Sale, Sprint,
     SyncLog, Task, Vendor, Workflow, db,
 )
+from .tenant import current_org_id, stamp_org
 
 
 # ── Static option lists ─────────────────────────────────────────────────────
@@ -196,10 +197,13 @@ def get_report_data(report) -> list[dict]:
     entity = report.entity
     group_by = report.group_by or ""
     metric = report.metric or "count"
+    org_id = getattr(report, "org_id", None) or current_org_id()
     rows = []
 
     def _q(model, group_field, value_expr, order_asc=False):
         q = db.session.query(group_field.label("label"), value_expr.label("value")).group_by(group_field)
+        if org_id is not None and hasattr(model, "org_id"):
+            q = q.filter(model.org_id == org_id)
         q = q.order_by(group_field.asc() if order_asc else value_expr.desc())
         return q.limit(20).all()
 
@@ -256,25 +260,36 @@ def get_report_data(report) -> list[dict]:
 
 # ── Board columns ────────────────────────────────────────────────────────────
 
-def get_task_columns() -> list[str]:
-    cols = BoardColumn.query.order_by(BoardColumn.position.asc(), BoardColumn.id.asc()).all()
+def get_task_columns(org_id: int | None = None) -> list[str]:
+    org_id = current_org_id() if org_id is None else org_id
+    q = BoardColumn.query
+    if org_id is not None:
+        q = q.filter_by(org_id=org_id)
+    cols = q.order_by(BoardColumn.position.asc(), BoardColumn.id.asc()).all()
     return [c.name for c in cols] if cols else DEFAULT_TASK_COLUMNS
 
 
-def seed_board_columns() -> None:
-    if BoardColumn.query.count():
+def seed_board_columns(org_id: int | None = None) -> None:
+    org_id = current_org_id() if org_id is None else org_id
+    q = BoardColumn.query
+    if org_id is not None:
+        q = q.filter_by(org_id=org_id)
+    if q.count():
         return
     for pos, name in enumerate(DEFAULT_TASK_COLUMNS):
-        db.session.add(BoardColumn(name=name, position=pos))
+        db.session.add(BoardColumn(name=name, position=pos, org_id=org_id))
     db.session.commit()
 
 
 # ── Custom fields ────────────────────────────────────────────────────────────
 
-def get_field_defs(entity_type: str) -> list[FieldDefinition]:
+def get_field_defs(entity_type: str, org_id: int | None = None) -> list[FieldDefinition]:
+    org_id = current_org_id() if org_id is None else org_id
+    q = FieldDefinition.query.filter_by(entity_type=entity_type)
+    if org_id is not None:
+        q = q.filter_by(org_id=org_id)
     return (
-        FieldDefinition.query
-        .filter_by(entity_type=entity_type)
+        q
         .order_by(FieldDefinition.position.asc(), FieldDefinition.id.asc())
         .all()
     )
@@ -314,6 +329,7 @@ def save_field_values(entity_type: str, entity_id: int, field_defs: list[FieldDe
                 entity_id=entity_id,
                 field_def_id=fd.id,
                 value=value,
+                org_id=getattr(fd, "org_id", None) or current_org_id(),
             ))
 
 
@@ -458,8 +474,16 @@ def build_alerts(today: date | None = None, cutoff: date | None = None):
 
 
 def seed_demo_data(force: bool = False) -> None:
+    org_id = current_org_id()
+
+    def _q(model):
+        q = model.query
+        if org_id is not None and hasattr(model, "org_id"):
+            q = q.filter_by(org_id=org_id)
+        return q
+
     existing_count = sum(
-        model.query.count()
+        _q(model).count()
         for model in [Task, Contact, Vendor, Asset, InventoryItem, Invoice, Renewal, Sale]
     )
     if existing_count and not force:
@@ -467,7 +491,7 @@ def seed_demo_data(force: bool = False) -> None:
 
     if force and existing_count:
         for model in [Task, Contact, Vendor, Asset, InventoryItem, Invoice, Renewal, Sale]:
-            model.query.delete()
+            _q(model).delete(synchronize_session=False)
         db.session.commit()
 
     today = date.today()
@@ -520,6 +544,9 @@ def seed_demo_data(force: bool = False) -> None:
     ]
 
     for collection in [tasks, contacts, vendors, assets, inventory, invoices, renewals, sales]:
+        if org_id is not None:
+            for obj in collection:
+                stamp_org(obj, org_id)
         db.session.add_all(collection)
     db.session.commit()
 
@@ -627,8 +654,12 @@ def _decrypt_value(value: str) -> str:
     return value  # legacy plaintext - still works, re-save to encrypt
 
 
-def get_integration_config(name: str) -> dict[str, str]:
-    rows = IntegrationConfig.query.filter_by(integration=name).all()
+def get_integration_config(name: str, org_id: int | None = None) -> dict[str, str]:
+    org_id = current_org_id() if org_id is None else org_id
+    q = IntegrationConfig.query.filter_by(integration=name)
+    if org_id is not None:
+        q = q.filter_by(org_id=org_id)
+    rows = q.all()
     result = {}
     for r in rows:
         if r.key in _ENCRYPTED_CONFIG_KEYS and r.value:
@@ -638,14 +669,18 @@ def get_integration_config(name: str) -> dict[str, str]:
     return result
 
 
-def set_integration_config(name: str, data: dict[str, str]) -> None:
+def set_integration_config(name: str, data: dict[str, str], org_id: int | None = None) -> None:
+    org_id = current_org_id() if org_id is None else org_id
     for key, value in data.items():
         stored = _encrypt_value(value) if key in _ENCRYPTED_CONFIG_KEYS and value else value
-        row = IntegrationConfig.query.filter_by(integration=name, key=key).first()
+        q = IntegrationConfig.query.filter_by(integration=name, key=key)
+        if org_id is not None:
+            q = q.filter_by(org_id=org_id)
+        row = q.first()
         if row:
             row.value = stored
         else:
-            db.session.add(IntegrationConfig(integration=name, key=key, value=stored))
+            db.session.add(IntegrationConfig(integration=name, key=key, value=stored, org_id=org_id))
     db.session.commit()
 
 
@@ -738,12 +773,19 @@ def _customer_phone(customer: dict | None) -> str:
 
 
 def _find_contact_by_shopify_id(shopify_id: str, email: str) -> Contact | None:
+    org_id = current_org_id()
     if email:
-        existing = Contact.query.filter_by(email=email).first()
+        q = Contact.query.filter_by(email=email)
+        if org_id is not None:
+            q = q.filter_by(org_id=org_id)
+        existing = q.first()
         if existing:
             return existing
     if shopify_id:
-        return Contact.query.filter(Contact.notes.like(f"%Shopify id={shopify_id}%")).first()
+        q = Contact.query.filter(Contact.notes.like(f"%Shopify id={shopify_id}%"))
+        if org_id is not None:
+            q = q.filter(Contact.org_id == org_id)
+        return q.first()
     return None
 
 
@@ -789,6 +831,7 @@ def sync_shopify_customers(shop_domain: str, access_token: str) -> dict:
 
     created = updated = total_fetched = 0
     after: str | None = None
+    org_id = current_org_id()
 
     query = """
     query OpsPilotCustomers($first: Int!, $after: String) {
@@ -824,7 +867,7 @@ def sync_shopify_customers(shop_domain: str, access_token: str) -> dict:
                 {"first": _SHOPIFY_PAGE_SIZE, "after": after},
             )
         except Exception as exc:
-            _log_sync("shopify", "customers", created + updated, status="error", error=_classify_shopify_error(exc))
+            _log_sync("shopify", "customers", created + updated, status="error", error=_classify_shopify_error(exc), org_id=org_id)
             return {"status": "error", "error": _classify_shopify_error(exc), "created": created, "updated": updated}
 
         connection = body.get("data", {}).get("customers", {})
@@ -853,6 +896,7 @@ def sync_shopify_customers(shop_domain: str, access_token: str) -> dict:
                     phone=_customer_phone(c),
                     stage="Active",
                     notes=f"Synced from Shopify id={shopify_id}",
+                    org_id=org_id,
                 ))
                 created += 1
 
@@ -868,7 +912,7 @@ def sync_shopify_customers(shop_domain: str, access_token: str) -> dict:
         if not after:
             break
 
-    _log_sync("shopify", "customers", created + updated)
+    _log_sync("shopify", "customers", created + updated, org_id=org_id)
     return {"status": "ok", "created": created, "updated": updated, "total_fetched": total_fetched}
 
 
@@ -884,6 +928,7 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
     created_sales = updated_sales = created_inv = total_fetched = 0
     after: str | None = None
     today = date.today()
+    org_id = current_org_id()
 
     query = """
     query OpsPilotOrders($first: Int!, $after: String) {
@@ -943,7 +988,7 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
                 {"first": _SHOPIFY_PAGE_SIZE, "after": after},
             )
         except Exception as exc:
-            _log_sync("shopify", "orders", created_sales + updated_sales, status="error", error=_classify_shopify_error(exc))
+            _log_sync("shopify", "orders", created_sales + updated_sales, status="error", error=_classify_shopify_error(exc), org_id=org_id)
             return {"status": "error", "error": _classify_shopify_error(exc), "created_sales": created_sales, "created_invoices": created_inv}
 
         connection = body.get("data", {}).get("orders", {})
@@ -969,7 +1014,10 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
                 sum(_line_item_quantity(li) for li in line_items if isinstance(li, dict)),
             )
 
-            existing_sale = Sale.query.filter_by(order_ref=order_ref).first()
+            q_sale = Sale.query.filter_by(order_ref=order_ref)
+            if org_id is not None:
+                q_sale = q_sale.filter_by(org_id=org_id)
+            existing_sale = q_sale.first()
             if existing_sale:
                 existing_sale.revenue = revenue
                 existing_sale.customer_name = customer_name
@@ -985,6 +1033,7 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
                     revenue=revenue,
                     cost=Decimal("0"),
                     quantity=quantity,
+                    org_id=org_id,
                 ))
                 created_sales += 1
 
@@ -996,7 +1045,10 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
                     due_date = date.fromisoformat(due_raw)
                 except ValueError:
                     due_date = today
-                if not Invoice.query.filter_by(reference=ref).first():
+                q_invoice = Invoice.query.filter_by(reference=ref)
+                if org_id is not None:
+                    q_invoice = q_invoice.filter_by(org_id=org_id)
+                if not q_invoice.first():
                     db.session.add(Invoice(
                         kind="sales",
                         party_name=customer_name,
@@ -1005,6 +1057,7 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
                         due_date=due_date,
                         status="Unpaid",
                         notes=f"Synced from Shopify order {order_ref}",
+                        org_id=org_id,
                     ))
                     created_inv += 1
 
@@ -1020,7 +1073,7 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
         if not after:
             break
 
-    _log_sync("shopify", "orders", created_sales + updated_sales)
+    _log_sync("shopify", "orders", created_sales + updated_sales, org_id=org_id)
     return {
         "status": "ok",
         "created_sales": created_sales,
@@ -1030,13 +1083,32 @@ def sync_shopify_orders(shop_domain: str, access_token: str) -> dict:
     }
 
 
-def _log_sync(integration: str, entity: str, count: int, status: str = "ok", error: str | None = None) -> None:
-    db.session.add(SyncLog(integration=integration, entity=entity, synced_count=count, status=status, error=error))
+def _log_sync(
+    integration: str,
+    entity: str,
+    count: int,
+    status: str = "ok",
+    error: str | None = None,
+    org_id: int | None = None,
+) -> None:
+    org_id = current_org_id() if org_id is None else org_id
+    db.session.add(SyncLog(
+        integration=integration,
+        entity=entity,
+        synced_count=count,
+        status=status,
+        error=error,
+        org_id=org_id,
+    ))
     db.session.commit()
 
 
-def get_sync_logs(integration: str, limit: int = 20) -> list:
-    return SyncLog.query.filter_by(integration=integration).order_by(SyncLog.synced_at.desc()).limit(limit).all()
+def get_sync_logs(integration: str, limit: int = 20, org_id: int | None = None) -> list:
+    org_id = current_org_id() if org_id is None else org_id
+    q = SyncLog.query.filter_by(integration=integration)
+    if org_id is not None:
+        q = q.filter_by(org_id=org_id)
+    return q.order_by(SyncLog.synced_at.desc()).limit(limit).all()
 
 
 # ── Audit logging ────────────────────────────────────────────────────────────
@@ -1047,6 +1119,7 @@ def log_audit(
     status: str = "ok",
     message: str | None = None,
     related_record: str | None = None,
+    org_id: int | None = None,
 ) -> None:
     """Write a row to AuditLog. Never raises — app flow is not interrupted on failure.
     Automatically resolves the current user from Flask's g object."""
@@ -1055,6 +1128,8 @@ def log_audit(
         from flask import g
         user_obj = getattr(g, "user", None)
         user_str = user_obj.username if user_obj else "system"
+        if org_id is None and user_obj and not user_obj.is_super_admin:
+            org_id = user_obj.org_id
     except RuntimeError:
         user_str = "system"
     try:
@@ -1065,6 +1140,7 @@ def log_audit(
             status=status,
             message=message,
             related_record=related_record,
+            org_id=org_id,
         )
         db.session.add(entry)
         db.session.commit()
@@ -1081,12 +1157,19 @@ def get_smtp_config() -> dict[str, str]:
 def create_invoice_from_renewal(renewal) -> Invoice:
     """Create an unpaid Invoice record from a Renewal. Does not commit."""
     today = date.today()
+    org_id = getattr(renewal, "org_id", None) or current_org_id()
     base_ref = f"RNW-{renewal.id}-{today.strftime('%Y%m%d')}"
     ref = base_ref
     n = 0
-    while Invoice.query.filter_by(reference=ref).first():
+    q = Invoice.query.filter_by(reference=ref)
+    if org_id is not None:
+        q = q.filter_by(org_id=org_id)
+    while q.first():
         n += 1
         ref = f"{base_ref}-{n}"
+        q = Invoice.query.filter_by(reference=ref)
+        if org_id is not None:
+            q = q.filter_by(org_id=org_id)
     return Invoice(
         kind="sales",
         party_name=renewal.contact_name or renewal.provider or renewal.title,
@@ -1095,15 +1178,18 @@ def create_invoice_from_renewal(renewal) -> Invoice:
         due_date=renewal.renew_on,
         status="Unpaid",
         notes=f"Invoice for renewal: {renewal.title}",
+        org_id=org_id,
     )
 
 
-def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> dict:
+def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict,
+                   attachment_bytes: bytes | None = None, attachment_filename: str | None = None) -> dict:
     """Send via smtplib. Raises ValueError on any failure."""
     import smtplib
     import socket
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
+    from email.mime.application import MIMEApplication
 
     host = (cfg.get("host") or "").strip()
     port = int(cfg.get("port") or 587)
@@ -1119,7 +1205,20 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> di
         raise ValueError("SMTP 'From' address is not configured. Set it in Settings → Email.")
 
     provider_info = f"{host}:{port} (TLS={use_tls})"
-    msg = MIMEMultipart("alternative")
+
+    if attachment_bytes:
+        msg = MIMEMultipart("mixed")
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(alt)
+        pdf_part = MIMEApplication(attachment_bytes, _subtype="pdf")
+        pdf_part.add_header("Content-Disposition", "attachment",
+                            filename=attachment_filename or "invoice.pdf")
+        msg.attach(pdf_part)
+    else:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
     msg["Subject"] = subject
     if from_name:
         from email.utils import formataddr as _formataddr
@@ -1127,7 +1226,6 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> di
     else:
         msg["From"] = from_addr
     msg["To"] = to_email
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     try:
         with smtplib.SMTP(host, port, timeout=20) as smtp:
@@ -1161,7 +1259,8 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> di
     return {"provider": provider_info, "refused": refused_addrs}
 
 
-def _send_via_sendgrid(to_email: str, subject: str, html_body: str, cfg: dict) -> dict:
+def _send_via_sendgrid(to_email: str, subject: str, html_body: str, cfg: dict,
+                       attachment_bytes: bytes | None = None, attachment_filename: str | None = None) -> dict:
     """Send via SendGrid Web API v3. Raises ValueError on failure."""
     api_key = (cfg.get("api_key") or "").strip()
     from_addr = (cfg.get("from_addr") or "").strip()
@@ -1170,12 +1269,19 @@ def _send_via_sendgrid(to_email: str, subject: str, html_body: str, cfg: dict) -
     if not from_addr:
         raise ValueError("'From' address is not configured. Set it in Settings → Email.")
 
-    payload = json.dumps({
+    body: dict = {
         "personalizations": [{"to": [{"email": to_email}]}],
         "from": {"email": from_addr},
         "subject": subject,
         "content": [{"type": "text/html", "value": html_body}],
-    }).encode("utf-8")
+    }
+    if attachment_bytes:
+        body["attachments"] = [{
+            "content": base64.b64encode(attachment_bytes).decode(),
+            "filename": attachment_filename or "invoice.pdf",
+            "type": "application/pdf",
+        }]
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         "https://api.sendgrid.com/v3/mail/send",
         data=payload,
@@ -1198,7 +1304,8 @@ def _send_via_sendgrid(to_email: str, subject: str, html_body: str, cfg: dict) -
         raise ValueError(f"Could not reach SendGrid API: {exc}")
 
 
-def _send_via_resend(to_email: str, subject: str, html_body: str, cfg: dict) -> dict:
+def _send_via_resend(to_email: str, subject: str, html_body: str, cfg: dict,
+                     attachment_bytes: bytes | None = None, attachment_filename: str | None = None) -> dict:
     """Send via Resend API. Raises ValueError on failure."""
     api_key = (cfg.get("api_key") or "").strip()
     from_addr = (cfg.get("from_addr") or "").strip()
@@ -1207,12 +1314,18 @@ def _send_via_resend(to_email: str, subject: str, html_body: str, cfg: dict) -> 
     if not from_addr:
         raise ValueError("'From' address is not configured. Set it in Settings → Email.")
 
-    payload = json.dumps({
+    body: dict = {
         "from": from_addr,
         "to": [to_email],
         "subject": subject,
         "html": html_body,
-    }).encode("utf-8")
+    }
+    if attachment_bytes:
+        body["attachments"] = [{
+            "filename": attachment_filename or "invoice.pdf",
+            "content": base64.b64encode(attachment_bytes).decode(),
+        }]
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         "https://api.resend.com/emails",
         data=payload,
@@ -1239,15 +1352,20 @@ def _send_via_resend(to_email: str, subject: str, html_body: str, cfg: dict) -> 
         raise ValueError(f"Could not reach Resend API: {exc}")
 
 
-def send_invoice_email(to_email: str, subject: str, html_body: str, smtp_config: dict) -> dict:
+def send_invoice_email(to_email: str, subject: str, html_body: str, smtp_config: dict,
+                       attachment_bytes: bytes | None = None,
+                       attachment_filename: str | None = None) -> dict:
     """Send email via whichever provider is active in config.
     Returns {"provider": str, "refused": []}. Raises ValueError on failure."""
     provider = (smtp_config.get("provider") or "smtp").lower()
     if provider == "sendgrid":
-        return _send_via_sendgrid(to_email, subject, html_body, smtp_config)
+        return _send_via_sendgrid(to_email, subject, html_body, smtp_config,
+                                  attachment_bytes, attachment_filename)
     if provider == "resend":
-        return _send_via_resend(to_email, subject, html_body, smtp_config)
-    return _send_via_smtp(to_email, subject, html_body, smtp_config)
+        return _send_via_resend(to_email, subject, html_body, smtp_config,
+                                attachment_bytes, attachment_filename)
+    return _send_via_smtp(to_email, subject, html_body, smtp_config,
+                          attachment_bytes, attachment_filename)
 
 
 def send_test_email(to_email: str, smtp_config: dict) -> dict:

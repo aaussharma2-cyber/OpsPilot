@@ -11,6 +11,8 @@ from flask import Flask, abort, g, redirect, request, session, url_for
 from .config import Config
 from .models import db, User, Organization
 
+_TENANT_GUARDS_INSTALLED = False
+
 # ── Rate limiter (shared instance, configured in create_app) ─────────────────
 try:
     from flask_limiter import Limiter
@@ -41,9 +43,9 @@ def _run_migrations(app: Flask) -> None:
         for tbl in [
             "app_user", "sprint", "task", "contact", "vendor", "asset",
             "inventory_item", "invoice", "renewal", "sale",
-            "board_column", "field_definition", "workflow", "alert_log",
-            "dashboard_widget", "dashboard_report", "integration_config",
-            "sync_log", "audit_log",
+            "task_history", "board_column", "field_definition", "field_value",
+            "workflow", "workflow_run", "alert_log", "dashboard_widget",
+            "dashboard_report", "integration_config", "sync_log", "audit_log",
         ]:
             _safe_add(f"ALTER TABLE {tbl} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
 
@@ -101,9 +103,9 @@ def _ensure_default_org(conn) -> None:
         for tbl in [
             "app_user", "sprint", "task", "contact", "vendor", "asset",
             "inventory_item", "invoice", "renewal", "sale",
-            "board_column", "field_definition", "workflow", "alert_log",
-            "dashboard_widget", "dashboard_report", "integration_config",
-            "sync_log", "audit_log",
+            "task_history", "board_column", "field_definition", "field_value",
+            "workflow", "workflow_run", "alert_log", "dashboard_widget",
+            "dashboard_report", "integration_config", "sync_log", "audit_log",
         ]:
             try:
                 conn.execute(db.text(f"UPDATE {tbl} SET org_id={org_id} WHERE org_id IS NULL"))
@@ -185,6 +187,74 @@ def _sync_security_alerts(app: Flask) -> None:
         db.session.rollback()
 
 
+def _install_tenant_guards() -> None:
+    """Install ORM-level tenant filters for normal web requests."""
+    global _TENANT_GUARDS_INSTALLED
+    if _TENANT_GUARDS_INSTALLED:
+        return
+
+    from flask import has_request_context
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session as ORMSession, with_loader_criteria
+
+    from .models import (
+        AlertLog, Asset, BoardColumn, Contact, DashboardReport, DashboardWidget,
+        FieldDefinition, FieldValue, IntegrationConfig, InventoryItem, Invoice,
+        Renewal, Sale, Sprint, SyncLog, Task, TaskHistory, Vendor, Workflow,
+        WorkflowRun, AuditLog,
+    )
+
+    tenant_models = (
+        Sprint, Task, Contact, Vendor, Asset, InventoryItem, Invoice, Renewal,
+        Sale, TaskHistory, BoardColumn, FieldDefinition, FieldValue, Workflow,
+        WorkflowRun, AlertLog, DashboardWidget, DashboardReport,
+        IntegrationConfig, SyncLog, AuditLog,
+    )
+
+    def _request_org_id() -> int | None:
+        if not has_request_context():
+            return None
+        role = session.get("role")
+        org_id = session.get("org_id")
+        if role is None:
+            user = getattr(g, "user", None)
+            state = getattr(user, "__dict__", {}) if user else {}
+            role = state.get("role")
+            org_id = state.get("org_id")
+        if role == "super_admin":
+            return None
+        return org_id
+
+    @event.listens_for(ORMSession, "do_orm_execute")
+    def _scope_tenant_selects(execute_state):
+        if not execute_state.is_select or execute_state.execution_options.get("skip_tenant_scope"):
+            return
+        org_id = _request_org_id()
+        if org_id is None:
+            return
+        statement = execute_state.statement
+        for model in tenant_models:
+            statement = statement.options(
+                with_loader_criteria(
+                    model,
+                    lambda cls: cls.org_id == org_id,
+                    include_aliases=True,
+                )
+            )
+        execute_state.statement = statement
+
+    @event.listens_for(ORMSession, "before_flush")
+    def _stamp_new_tenant_rows(session, flush_context, instances):
+        org_id = _request_org_id()
+        if org_id is None:
+            return
+        for obj in session.new:
+            if isinstance(obj, tenant_models) and getattr(obj, "org_id", None) is None:
+                obj.org_id = org_id
+
+    _TENANT_GUARDS_INSTALLED = True
+
+
 def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(Config)
@@ -192,6 +262,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config.update(test_config)
 
     db.init_app(app)
+    _install_tenant_guards()
 
     # Rate limiter
     if _limiter_available:
@@ -202,7 +273,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         _run_migrations(app)
         ensure_default_admin(app)
         from .services import seed_board_columns
-        seed_board_columns()
+        default_org = Organization.query.filter_by(slug="default").first()
+        seed_board_columns(default_org.id if default_org else None)
         _sync_security_alerts(app)
 
     @app.before_request
@@ -213,6 +285,31 @@ def create_app(test_config: dict | None = None) -> Flask:
             u = db.session.get(User, user_id)
             if u and u.is_active:
                 g.user = u
+                session["role"] = u.role
+                session["org_id"] = u.org_id
+
+    @app.before_request
+    def enforce_tenant_boundaries() -> None:
+        if g.user is None:
+            return
+        endpoint = request.endpoint or ""
+        allowed_for_super_admin = {
+            "health",
+            "static",
+            "main.index",
+            "main.login",
+            "main.signup",
+            "main.logout",
+            "main.platform_admin",
+            "main.platform_org_toggle",
+            "main.platform_org_plan",
+        }
+        if g.user.is_super_admin:
+            if endpoint not in allowed_for_super_admin:
+                abort(403)
+            return
+        if endpoint.startswith("main.") and not g.user.org_id:
+            abort(403)
 
     @app.context_processor
     def inject_globals():

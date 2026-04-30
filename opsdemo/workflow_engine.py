@@ -93,9 +93,10 @@ def _execute_action(workflow: Workflow, entity, context: dict | None) -> str:
     from .services import get_task_columns
 
     config = json.loads(workflow.action_config or "{}")
+    org_id = workflow.org_id or getattr(entity, "org_id", None)
 
     if workflow.action_type == "create_task":
-        columns = get_task_columns()
+        columns = get_task_columns(org_id)
         status = config.get("status", columns[0] if columns else "Backlog")
         if status not in columns:
             status = columns[0] if columns else "Backlog"
@@ -108,18 +109,22 @@ def _execute_action(workflow: Workflow, entity, context: dict | None) -> str:
             owner=config.get("owner", "") or None,
             related_type=config.get("related_type", "") or None,
             related_name=_interpolate(config.get("related_name", ""), entity) or None,
+            org_id=org_id,
         )
         db.session.add(task)
         db.session.flush()
         return f"Created task #{task.id}: {task.title}"
 
     if workflow.action_type == "update_task_status":
-        columns = get_task_columns()
+        columns = get_task_columns(org_id)
         new_status = config.get("status", "")
         if new_status not in columns:
             return f"Invalid status '{new_status}'"
         match_name = _interpolate(config.get("related_name", ""), entity) or _entity_display_name(entity)
-        tasks = Task.query.filter_by(related_name=match_name).all()
+        q = Task.query.filter_by(related_name=match_name)
+        if org_id is not None:
+            q = q.filter_by(org_id=org_id)
+        tasks = q.all()
         for t in tasks:
             t.status = new_status
         db.session.flush()
@@ -134,6 +139,7 @@ def _execute_action(workflow: Workflow, entity, context: dict | None) -> str:
             title=title or "Workflow alert",
             detail=detail or None,
             source=workflow.name,
+            org_id=org_id,
         )
         db.session.add(alert)
         db.session.flush()
@@ -149,7 +155,11 @@ def fire_event(entity_type: str, event: str, entity, context: dict | None = None
             enabled=True,
             trigger_entity=entity_type,
             trigger_event=event,
-        ).all()
+        )
+        org_id = getattr(entity, "org_id", None)
+        if org_id is not None:
+            workflows = workflows.filter_by(org_id=org_id)
+        workflows = workflows.all()
 
         for wf in workflows:
             if not _eval_condition(wf.trigger_condition, entity, context):
@@ -167,6 +177,7 @@ def fire_event(entity_type: str, event: str, entity, context: dict | None = None
                 entity_id=entity.id,
                 status=run_status,
                 detail=detail,
+                org_id=wf.org_id or org_id,
             ))
 
         db.session.commit()

@@ -7,10 +7,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pytest
+from werkzeug.security import generate_password_hash
 
 from opsdemo import _try_exec, create_app
 from opsdemo import services
-from opsdemo.models import AlertLog, AuditLog, Contact, InventoryItem, Invoice, Renewal, Sale, Task, db
+from opsdemo.models import (
+    AlertLog,
+    AuditLog,
+    Contact,
+    InventoryItem,
+    Invoice,
+    Organization,
+    Renewal,
+    Sale,
+    Task,
+    User,
+    db,
+)
 
 
 @pytest.fixture()
@@ -57,17 +70,52 @@ def extract_csrf(html: str) -> str:
     raise AssertionError("CSRF token not found")
 
 
-def login(client):
+def login(client, username="admin", password="ChangeMe123!", expect_dashboard=True):
     login_page = client.get("/login")
     csrf = extract_csrf(login_page.get_data(as_text=True))
     response = client.post(
         "/login",
-        data={"username": "admin", "password": "ChangeMe123!", "csrf_token": csrf},
+        data={"username": username, "password": password, "csrf_token": csrf},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    if expect_dashboard:
+        assert b"Dashboard" in response.data
+    return response
+
+
+def logout(client):
+    page = client.get("/dashboard")
+    csrf = extract_csrf(page.get_data(as_text=True))
+    response = client.post("/logout", data={"csrf_token": csrf}, follow_redirects=True)
+    assert response.status_code == 200
+    return response
+
+
+def signup(client, org_name="Tenant Two", username="tenant2", email="tenant2@example.test"):
+    page = client.get("/signup")
+    csrf = extract_csrf(page.get_data(as_text=True))
+    response = client.post(
+        "/signup",
+        data={
+            "csrf_token": csrf,
+            "org_name": org_name,
+            "username": username,
+            "email": email,
+            "password": "TenantPass123!",
+            "password2": "TenantPass123!",
+        },
         follow_redirects=True,
     )
     assert response.status_code == 200
     assert b"Dashboard" in response.data
     return response
+
+
+def default_org_id():
+    org = Organization.query.filter_by(slug="default").first()
+    assert org is not None
+    return org.id
 
 
 def test_health(client):
@@ -395,7 +443,12 @@ def test_notification_center_shows_alerts(client, app):
     """Alerts stored in AlertLog appear on the notification center page."""
     login(client)
     with app.app_context():
-        alert = AlertLog(severity="warning", title="Test alert", detail="Unit test detail")
+        alert = AlertLog(
+            severity="warning",
+            title="Test alert",
+            detail="Unit test detail",
+            org_id=default_org_id(),
+        )
         db.session.add(alert)
         db.session.commit()
 
@@ -407,7 +460,7 @@ def test_notification_mark_read(client, app):
     """Mark-as-read updates is_read flag."""
     login(client)
     with app.app_context():
-        alert = AlertLog(severity="info", title="Read me", is_read=False)
+        alert = AlertLog(severity="info", title="Read me", is_read=False, org_id=default_org_id())
         db.session.add(alert)
         db.session.commit()
         alert_id = alert.id
@@ -546,3 +599,101 @@ def test_shopify_missing_config_shows_setup_message(client, app):
     assert r.status_code == 200
     html = r.get_data(as_text=True)
     assert "Running locally" in html or "public callback URL" in html
+
+
+def test_self_signup_org_is_isolated_from_default_data(client, app):
+    """A self-signed-up org cannot see the default org's data or credentials."""
+    login(client)
+
+    shopify_page = client.get("/settings/integrations/shopify")
+    csrf = extract_csrf(shopify_page.get_data(as_text=True))
+    client.post(
+        "/settings/integrations/shopify",
+        data={
+            "csrf_token": csrf,
+            "action": "save",
+            "shop_domain": "default-store.myshopify.com",
+            "access_token": "default-secret-token",
+        },
+        follow_redirects=True,
+    )
+
+    invoice_page = client.get("/invoices")
+    csrf = extract_csrf(invoice_page.get_data(as_text=True))
+    client.post(
+        "/invoices",
+        data={
+            "csrf_token": csrf,
+            "reference": "ORG-A-ONLY",
+            "party_name": "Default Tenant",
+            "amount": "99.00",
+            "due_date": "2026-05-01",
+            "status": "Unpaid",
+        },
+        follow_redirects=True,
+    )
+    with app.app_context():
+        invoice = Invoice.query.filter_by(reference="ORG-A-ONLY").first()
+        assert invoice is not None
+        invoice_id = invoice.id
+
+    logout(client)
+    signup(client, org_name="Fresh Tenant", username="freshadmin", email="fresh@example.test")
+
+    html = client.get("/invoices").get_data(as_text=True)
+    assert "ORG-A-ONLY" not in html
+
+    blocked_pdf = client.get(f"/invoices/{invoice_id}/export.pdf", follow_redirects=True)
+    assert "Invoice not found" in blocked_pdf.get_data(as_text=True)
+
+    audit_html = client.get("/audit-log").get_data(as_text=True)
+    assert "ORG-A-ONLY" not in audit_html
+
+    shopify_html = client.get("/settings/integrations/shopify").get_data(as_text=True)
+    assert "default-store.myshopify.com" not in shopify_html
+    assert "default-secret-token" not in shopify_html
+
+
+def test_cross_org_invoice_mutation_by_id_is_blocked(client, app):
+    """Guessing another org's invoice id must not allow writes."""
+    login(client)
+    invoice_page = client.get("/invoices")
+    csrf = extract_csrf(invoice_page.get_data(as_text=True))
+    client.post(
+        "/invoices",
+        data={
+            "csrf_token": csrf,
+            "reference": "MUTATION-LOCK",
+            "party_name": "Default Tenant",
+            "amount": "49.00",
+            "due_date": "2026-05-01",
+            "status": "Unpaid",
+        },
+        follow_redirects=True,
+    )
+    with app.app_context():
+        invoice = Invoice.query.filter_by(reference="MUTATION-LOCK").first()
+        invoice_id = invoice.id
+
+    logout(client)
+    signup(client, org_name="Write Block Tenant", username="writeblock", email="writeblock@example.test")
+    csrf = extract_csrf(client.get("/invoices").get_data(as_text=True))
+    client.post(f"/invoices/{invoice_id}/mark_paid", data={"csrf_token": csrf}, follow_redirects=True)
+
+    with app.app_context():
+        invoice = db.session.get(Invoice, invoice_id)
+        assert invoice.status == "Unpaid"
+
+
+def test_super_admin_cannot_access_tenant_data_pages(client, app):
+    """Platform super admins can manage platform metadata, not tenant records."""
+    with app.app_context():
+        user = User(username="super", email="super@example.test", role="super_admin", is_active=True)
+        user.password_hash = generate_password_hash("SuperPass123!")
+        db.session.add(user)
+        db.session.commit()
+
+    response = login(client, username="super", password="SuperPass123!", expect_dashboard=False)
+    assert b"Platform Administration" in response.data
+    assert client.get("/platform/admin").status_code == 200
+    assert client.get("/invoices").status_code == 403

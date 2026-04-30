@@ -66,6 +66,7 @@ from .services import (
     parse_decimal,
     parse_int,
     save_field_values,
+    seed_board_columns,
     seed_demo_data,
     send_invoice_email,
     send_test_email,
@@ -78,6 +79,7 @@ from .services import (
     validate_shopify_domain,
 )
 from .workflow_engine import fire_event
+from .tenant import current_org_id
 
 bp = Blueprint("main", __name__)
 
@@ -109,6 +111,8 @@ def handle_validation_error(error):
 @bp.route("/")
 def index():
     if g.get("user"):
+        if g.user.is_super_admin:
+            return redirect(url_for("main.platform_admin"))
         return redirect(url_for("main.dashboard"))
     return redirect(url_for("main.login"))
 
@@ -131,10 +135,14 @@ def login():
             session.clear()
             session.permanent = True
             session["user_id"] = user.id
+            session["role"] = user.role
+            session["org_id"] = user.org_id
             session["csrf_token"] = secrets.token_hex(16)
             g.user = user
             log_audit("login", "auth", status="ok", message=f"User '{username}' logged in")
             flash("Welcome back.", "success")
+            if user.is_super_admin:
+                return redirect(url_for("main.platform_admin"))
             return redirect(url_for("main.dashboard"))
 
         failures = int(session.get("login_failures", 0)) + 1
@@ -165,6 +173,8 @@ def logout():
 @bp.route("/signup", methods=["GET", "POST"])
 def signup():
     if g.get("user"):
+        if g.user.is_super_admin:
+            return redirect(url_for("main.platform_admin"))
         return redirect(url_for("main.dashboard"))
     if request.method == "POST":
         verify_csrf()
@@ -216,14 +226,18 @@ def signup():
         )
         user.password_hash = generate_password_hash(password)
         db.session.add(user)
+        seed_board_columns(org.id)
         db.session.commit()
 
         log_audit("signup", "auth", status="ok",
-                  message=f"New organisation '{org_name}' created by '{username}'")
+                  message=f"New organisation '{org_name}' created by '{username}'",
+                  org_id=org.id)
         flash(f"Welcome to OpsPilot! Your organisation '{org_name}' is ready.", "success")
         session.clear()
         session.permanent = True
         session["user_id"] = user.id
+        session["role"] = user.role
+        session["org_id"] = user.org_id
         session["csrf_token"] = secrets.token_hex(16)
         return redirect(url_for("main.dashboard"))
 
@@ -329,6 +343,8 @@ def widget_add():
     last = DashboardWidget.query.order_by(DashboardWidget.position.desc()).first()
     position = (last.position + 1) if last else 0
     report_id = int(report_id_raw) if report_id_raw.isdigit() else None
+    if report_id and not db.session.get(DashboardReport, report_id):
+        report_id = None
     w = DashboardWidget(widget_type=widget_type, position=position, report_id=report_id)
     db.session.add(w)
     db.session.commit()
@@ -358,8 +374,9 @@ def widget_delete(wid):
 def widget_reorder():
     verify_csrf()
     ids = request.json.get("ids", [])
+    org_id = current_org_id()
     for position, wid in enumerate(ids):
-        DashboardWidget.query.filter_by(id=int(wid)).update({"position": position})
+        DashboardWidget.query.filter_by(id=int(wid), org_id=org_id).update({"position": position})
     db.session.commit()
     return jsonify({"ok": True})
 
@@ -568,7 +585,7 @@ def settings_integrations_shopify():
                 flash("Shopify credentials saved.", "success")
                 cfg = get_integration_config("shopify")
         elif action == "disconnect":
-            IntegrationConfig.query.filter_by(integration="shopify").delete()
+            IntegrationConfig.query.filter_by(integration="shopify", org_id=current_org_id()).delete()
             db.session.commit()
             flash("Shopify credentials removed.", "success")
             return redirect(url_for("main.settings_integrations_shopify"))
@@ -699,6 +716,8 @@ def tasks():
             priority = "Medium"
         sprint_id_raw = request.form.get("sprint_id_new", "").strip()
         sprint_id = int(sprint_id_raw) if sprint_id_raw.isdigit() else None
+        if sprint_id and not db.session.get(Sprint, sprint_id):
+            sprint_id = None
         task = Task(
             title=title,
             description=request.form.get("description", "").strip() or None,
@@ -983,7 +1002,8 @@ def task_set_sprint(task_id: int):
         task.sprint_id = None
     else:
         try:
-            task.sprint_id = int(sprint_id_raw)
+            sprint = db.session.get(Sprint, int(sprint_id_raw))
+            task.sprint_id = sprint.id if sprint else None
         except (ValueError, TypeError):
             task.sprint_id = None
     db.session.commit()
@@ -999,6 +1019,8 @@ def tasks_bulk_sprint():
     task_ids = request.form.getlist("task_ids")
     sprint_id_raw = request.form.get("sprint_id", "").strip()
     sprint_id = int(sprint_id_raw) if sprint_id_raw.isdigit() else None
+    if sprint_id and not db.session.get(Sprint, sprint_id):
+        sprint_id = None
     updated = 0
     for tid in task_ids:
         try:
@@ -1324,7 +1346,7 @@ def inventory():
         if not sku or not name:
             flash("SKU and item name are required.", "danger")
             return redirect(url_for("main.inventory"))
-        if InventoryItem.query.filter_by(sku=sku).first():
+        if InventoryItem.query.filter_by(sku=sku, org_id=current_org_id()).first():
             flash("SKU already exists.", "danger")
             return redirect(url_for("main.inventory"))
         item = InventoryItem(
@@ -1404,7 +1426,7 @@ def invoices():
         kind = request.form.get("kind", "sales")
         if kind not in INVOICE_KINDS:
             kind = "sales"
-        if Invoice.query.filter_by(reference=reference).first():
+        if Invoice.query.filter_by(reference=reference, org_id=current_org_id()).first():
             flash("Invoice reference already exists.", "danger")
             return redirect(url_for("main.invoices"))
         invoice = Invoice(
@@ -1491,18 +1513,29 @@ def invoice_send_email(invoice_id: int):
         smtp_cfg.setdefault("from_name", g.user.org.email_from_name)
 
     try:
+        org = g.user.org if g.user else None
         html_body = render_template(
             "_invoice_email.html",
             invoice=invoice,
             renewal=None,
             recipient_name=recipient_name or invoice.party_name or "Valued Customer",
-            org=g.user.org if g.user else None,
+            org=org,
         )
+        # Generate PDF attachment
+        pdf_bytes = None
+        pdf_filename = f"invoice_{invoice.reference.replace('/', '-')}.pdf"
+        try:
+            pdf_bytes = _generate_invoice_pdf_bytes(invoice, org=org)
+        except Exception:
+            pass  # send email without attachment if PDF fails
+
         subject = f"Invoice {invoice.reference} — {invoice.party_name}"
-        result = send_invoice_email(recipient_email, subject, html_body, smtp_cfg)
+        result = send_invoice_email(recipient_email, subject, html_body, smtp_cfg,
+                                    attachment_bytes=pdf_bytes,
+                                    attachment_filename=pdf_filename)
         log_audit("email_send", "invoices", status="ok", related_record=invoice.reference,
                   message=f"Invoice email sent via {result.get('provider')} to {recipient_email}.")
-        flash(f"Invoice {invoice.reference} sent to {recipient_email}.", "success")
+        flash(f"Invoice {invoice.reference} sent to {recipient_email} with PDF attached.", "success")
     except Exception as exc:
         log_audit("email_send", "invoices", status="error", related_record=invoice.reference,
                   message=f"Email FAILED for {invoice.reference} to {recipient_email}: {exc}")
@@ -1646,20 +1679,10 @@ def _pdf_dl(buf: io.BytesIO, filename: str) -> Response:
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@bp.route("/invoices/<int:invoice_id>/export.pdf")
-@login_required
-def invoice_export_pdf(invoice_id: int):
-    invoice = db.session.get(Invoice, invoice_id)
-    if not invoice:
-        flash("Invoice not found.", "danger")
-        return redirect(url_for("main.invoices"))
-
-    try:
-        A4, landscape, mm, colors, TA_RIGHT, TA_CENTER, TA_LEFT, ParagraphStyle, \
-            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable = _pdf_rl()
-    except ImportError:
-        flash("PDF export requires reportlab. Run: pip install reportlab", "danger")
-        return redirect(url_for("main.invoices"))
+def _generate_invoice_pdf_bytes(invoice, org=None) -> bytes:
+    """Build invoice PDF and return raw bytes. Raises ImportError if reportlab missing."""
+    A4, landscape, mm, colors, TA_RIGHT, TA_CENTER, TA_LEFT, ParagraphStyle, \
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable = _pdf_rl()
 
     NAVY   = colors.HexColor("#1e3a5f")
     BLUE   = colors.HexColor("#3b82f6")
@@ -1671,16 +1694,8 @@ def invoice_export_pdf(invoice_id: int):
     WHITE  = colors.white
 
     app_title = current_app.config.get("APP_TITLE", "OpsPilot Local")
-    # Org branding
-    _inv_hdr = app_title
-    _inv_ftr = None
-    try:
-        if g.user and g.user.org:
-            _inv_hdr = g.user.org.pdf_header_text or g.user.org.name or app_title
-            _inv_ftr = g.user.org.pdf_footer_text
-    except Exception:
-        pass
-    inv_footer_line = _inv_ftr or f"Generated by {app_title}"
+    _inv_hdr = (org.pdf_header_text or org.name) if org else app_title
+    inv_footer_line = (org.pdf_footer_text if org else None) or f"Generated by {app_title}"
 
     today = date.today()
     is_overdue = invoice.status != "Paid" and invoice.due_date < today
@@ -1690,7 +1705,7 @@ def invoice_export_pdf(invoice_id: int):
     doc = SimpleDocTemplate(buf, pagesize=A4,
                              leftMargin=20*mm, rightMargin=20*mm,
                              topMargin=15*mm, bottomMargin=15*mm)
-    pw = A4[0] - 40 * mm  # usable width
+    pw = A4[0] - 40 * mm
 
     def _p(text, font="Helvetica", size=10, color=colors.black, align=TA_LEFT,
            space_before=0, space_after=2):
@@ -1701,7 +1716,6 @@ def invoice_export_pdf(invoice_id: int):
 
     elements = []
 
-    # ── Header bar ────────────────────────────────────────────────────────────
     hdr = Table([[
         _p(f"<b>{_inv_hdr}</b>", size=13, color=WHITE),
         _p("<b>INVOICE</b>", font="Helvetica-Bold", size=22, color=WHITE, align=TA_RIGHT),
@@ -1715,7 +1729,6 @@ def invoice_export_pdf(invoice_id: int):
     elements.append(hdr)
     elements.append(Spacer(1, 7 * mm))
 
-    # ── Bill To + Invoice Details ─────────────────────────────────────────────
     bill_col = [
         _p("BILL TO", font="Helvetica-Bold", size=8, color=GREY, space_after=4),
         _p(f"<b>{invoice.party_name}</b>", size=14, space_after=0),
@@ -1736,7 +1749,6 @@ def invoice_export_pdf(invoice_id: int):
     elements.append(meta)
     elements.append(Spacer(1, 7 * mm))
 
-    # ── Amount due box ────────────────────────────────────────────────────────
     amount_str = f"${float(invoice.amount):,.2f}"
     amt = Table([[
         _p("AMOUNT DUE", font="Helvetica-Bold", size=9, color=GREY),
@@ -1751,7 +1763,6 @@ def invoice_export_pdf(invoice_id: int):
     ]))
     elements.append(amt)
 
-    # Status row
     paid_text = (f"  ·  Paid on {invoice.paid_on.strftime('%d %B %Y')}"
                  if invoice.paid_on else "")
     status_row = Table([[
@@ -1766,14 +1777,12 @@ def invoice_export_pdf(invoice_id: int):
     ]))
     elements.append(status_row)
 
-    # ── Notes ─────────────────────────────────────────────────────────────────
     if invoice.notes:
         elements.append(Spacer(1, 5 * mm))
         elements.append(_p("NOTES", font="Helvetica-Bold", size=8, color=GREY))
         elements.append(Spacer(1, 2 * mm))
         elements.append(_p(invoice.notes, size=10))
 
-    # ── Footer ────────────────────────────────────────────────────────────────
     elements.append(Spacer(1, 10 * mm))
     elements.append(HRFlowable(width="100%", thickness=0.5, color=LINE))
     elements.append(Spacer(1, 2 * mm))
@@ -1784,12 +1793,30 @@ def invoice_export_pdf(invoice_id: int):
         f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC",
         foot_s,
     ))
-
     doc.build(elements)
+    buf.seek(0)
+    return buf.read()
+
+
+@bp.route("/invoices/<int:invoice_id>/export.pdf")
+@login_required
+def invoice_export_pdf(invoice_id: int):
+    invoice = db.session.get(Invoice, invoice_id)
+    if not invoice:
+        flash("Invoice not found.", "danger")
+        return redirect(url_for("main.invoices"))
+
+    try:
+        pdf_bytes = _generate_invoice_pdf_bytes(invoice, org=g.user.org if g.user else None)
+    except ImportError:
+        flash("PDF export requires reportlab. Run: pip install reportlab", "danger")
+        return redirect(url_for("main.invoices"))
+
     log_audit("export_pdf", "invoices", related_record=invoice.reference,
               message=f"Exported invoice '{invoice.reference}' as PDF")
     filename = f"invoice_{invoice.reference.replace('/', '-')}.pdf"
-    return _pdf_dl(buf, filename)
+    return Response(pdf_bytes, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # ── Renewals ─────────────────────────────────────────────────────────────────
@@ -2115,11 +2142,17 @@ def notifications():
     per_page = 30
     severity_filter = request.args.get("severity", "").strip()
     query = AlertLog.query
+    org_id = current_org_id()
+    if org_id is not None:
+        query = query.filter_by(org_id=org_id)
     if severity_filter in ("info", "warning", "danger"):
         query = query.filter_by(severity=severity_filter)
     total = query.count()
     alerts = query.order_by(AlertLog.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
-    unread = AlertLog.query.filter_by(is_read=False).count()
+    unread_q = AlertLog.query.filter_by(is_read=False)
+    if org_id is not None:
+        unread_q = unread_q.filter_by(org_id=org_id)
+    unread = unread_q.count()
     return render_template(
         "notifications.html",
         title="Notifications",
@@ -2149,7 +2182,7 @@ def notification_mark_read(alert_id: int):
 @login_required
 def notifications_read_all():
     verify_csrf()
-    AlertLog.query.filter_by(is_read=False).update({"is_read": True})
+    AlertLog.query.filter_by(is_read=False, org_id=current_org_id()).update({"is_read": True})
     db.session.commit()
     flash("All notifications marked as read.", "success")
     return redirect(url_for("main.notifications"))
@@ -2159,7 +2192,7 @@ def notifications_read_all():
 @login_required
 def notifications_clear_read():
     verify_csrf()
-    AlertLog.query.filter_by(is_read=True).delete()
+    AlertLog.query.filter_by(is_read=True, org_id=current_org_id()).delete()
     db.session.commit()
     flash("Read notifications cleared.", "success")
     return redirect(url_for("main.notifications"))
@@ -2176,6 +2209,9 @@ def audit_log():
     status_filter = request.args.get("status", "").strip()
     user_filter = request.args.get("user", "").strip()
     query = AuditLog.query
+    org_id = current_org_id()
+    if org_id is not None:
+        query = query.filter_by(org_id=org_id)
     if module_filter:
         query = query.filter_by(module=module_filter)
     if status_filter in ("ok", "error", "warning"):
@@ -2184,8 +2220,13 @@ def audit_log():
         query = query.filter_by(user=user_filter)
     total = query.count()
     entries = query.order_by(AuditLog.timestamp.desc()).offset((page - 1) * per_page).limit(per_page).all()
-    modules = [r[0] for r in db.session.query(AuditLog.module).distinct().order_by(AuditLog.module).all()]
-    users = [r[0] for r in db.session.query(AuditLog.user).distinct().order_by(AuditLog.user).all()]
+    modules_q = db.session.query(AuditLog.module).distinct()
+    users_q = db.session.query(AuditLog.user).distinct()
+    if org_id is not None:
+        modules_q = modules_q.filter(AuditLog.org_id == org_id)
+        users_q = users_q.filter(AuditLog.org_id == org_id)
+    modules = [r[0] for r in modules_q.order_by(AuditLog.module).all()]
+    users = [r[0] for r in users_q.order_by(AuditLog.user).all()]
     return render_template(
         "audit_log.html",
         title="Audit Log",
@@ -2217,7 +2258,7 @@ def sales():
         if not order_ref or not customer_name or not order_date:
             flash("Order ref, customer and order date are required.", "danger")
             return redirect(url_for("main.sales"))
-        if Sale.query.filter_by(order_ref=order_ref).first():
+        if Sale.query.filter_by(order_ref=order_ref, org_id=current_org_id()).first():
             flash("Order reference already exists.", "danger")
             return redirect(url_for("main.sales"))
         sale = Sale(
@@ -2293,10 +2334,11 @@ def sales_export_pdf():
 @bp.route("/settings")
 @admin_required
 def settings():
+    org_id = current_org_id()
     workflow_count = Workflow.query.count()
     field_count = FieldDefinition.query.count()
     column_count = BoardColumn.query.count()
-    user_count = User.query.count()
+    user_count = User.query.filter_by(org_id=org_id).count()
     sprint_count = Sprint.query.count()
     integration_count = IntegrationConfig.query.count()
     current_theme = get_integration_config("ui").get("theme", "dark")
@@ -2320,6 +2362,7 @@ def settings():
 @bp.route("/settings/board", methods=["GET", "POST"])
 @admin_required
 def settings_board():
+    org_id = current_org_id()
     if request.method == "POST":
         verify_csrf()
         action = request.form.get("action")
@@ -2328,11 +2371,11 @@ def settings_board():
             color = request.form.get("color", "").strip()
             if not name:
                 flash("Column name is required.", "danger")
-            elif BoardColumn.query.filter_by(name=name).first():
+            elif BoardColumn.query.filter_by(name=name, org_id=org_id).first():
                 flash("A column with that name already exists.", "danger")
             else:
-                pos = BoardColumn.query.count()
-                db.session.add(BoardColumn(name=name, position=pos, color=color or None))
+                pos = BoardColumn.query.filter_by(org_id=org_id).count()
+                db.session.add(BoardColumn(name=name, position=pos, color=color or None, org_id=org_id))
                 db.session.commit()
                 flash(f"Column '{name}' added.", "success")
         elif action == "rename":
@@ -2340,10 +2383,10 @@ def settings_board():
             new_name = request.form.get("name", "").strip()
             col = db.session.get(BoardColumn, col_id)
             if col and new_name and new_name != col.name:
-                if BoardColumn.query.filter_by(name=new_name).first():
+                if BoardColumn.query.filter_by(name=new_name, org_id=org_id).first():
                     flash("That name is already taken.", "danger")
                 else:
-                    Task.query.filter_by(status=col.name).update({"status": new_name})
+                    Task.query.filter_by(status=col.name, org_id=org_id).update({"status": new_name})
                     col.name = new_name
                     col.color = request.form.get("color", "").strip() or None
                     db.session.commit()
@@ -2358,13 +2401,13 @@ def settings_board():
             if col:
                 remaining = [c for c in get_task_columns() if c != col.name]
                 fallback = remaining[0] if remaining else "Backlog"
-                Task.query.filter_by(status=col.name).update({"status": fallback})
+                Task.query.filter_by(status=col.name, org_id=org_id).update({"status": fallback})
                 db.session.delete(col)
                 db.session.commit()
                 flash(f"Column '{col.name}' deleted. Tasks moved to '{fallback}'.", "success")
         return redirect(url_for("main.settings_board"))
 
-    columns = BoardColumn.query.order_by(BoardColumn.position.asc(), BoardColumn.id.asc()).all()
+    columns = BoardColumn.query.filter_by(org_id=org_id).order_by(BoardColumn.position.asc(), BoardColumn.id.asc()).all()
     column_colors = ["", "blue", "green", "yellow", "red", "purple"]
     return render_template("settings_board.html", columns=columns, column_colors=column_colors)
 
@@ -2387,6 +2430,7 @@ def settings_board_reorder():
 @bp.route("/settings/fields", methods=["GET", "POST"])
 @admin_required
 def settings_fields():
+    org_id = current_org_id()
     if request.method == "POST":
         verify_csrf()
         action = request.form.get("action")
@@ -2404,10 +2448,10 @@ def settings_fields():
                 flash("Invalid field type.", "danger")
             else:
                 key = slugify(name)
-                if FieldDefinition.query.filter_by(entity_type=entity_type, field_key=key).first():
+                if FieldDefinition.query.filter_by(entity_type=entity_type, field_key=key, org_id=org_id).first():
                     flash(f"A field '{name}' already exists for that entity.", "danger")
                 else:
-                    pos = FieldDefinition.query.filter_by(entity_type=entity_type).count()
+                    pos = FieldDefinition.query.filter_by(entity_type=entity_type, org_id=org_id).count()
                     opts = None
                     if field_type == "select" and options_raw:
                         opts = json.dumps([o.strip() for o in options_raw.split(",") if o.strip()])
@@ -2419,6 +2463,7 @@ def settings_fields():
                         options=opts,
                         position=pos,
                         required=required,
+                        org_id=org_id,
                     ))
                     db.session.commit()
                     flash(f"Field '{name}' added to {ENTITY_LABELS.get(entity_type, entity_type)}.", "success")
@@ -2451,6 +2496,7 @@ def settings_fields():
 @admin_required
 def settings_workflows():
     columns = get_task_columns()
+    org_id = current_org_id()
     if request.method == "POST":
         verify_csrf()
         action = request.form.get("action")
@@ -2508,6 +2554,7 @@ def settings_workflows():
                     trigger_condition=condition,
                     action_type=action_type,
                     action_config=json.dumps(cfg),
+                    org_id=org_id,
                 ))
                 db.session.commit()
                 flash(f"Workflow '{name}' created.", "success")
@@ -2609,6 +2656,8 @@ def settings_workflows():
 @bp.route("/settings/users", methods=["GET", "POST"])
 @admin_required
 def settings_users():
+    org_id = current_org_id()
+    roles = ["org_admin", "member", "viewer"]
     if request.method == "POST":
         verify_csrf()
         action = request.form.get("action")
@@ -2617,14 +2666,19 @@ def settings_users():
             username = request.form.get("username", "").strip().lower()
             password = request.form.get("password", "")
             role = request.form.get("role", "viewer")
+            if role not in roles:
+                role = "viewer"
+            allowed, current, limit = check_user_limit(org_id)
             if not username or not password:
                 flash("Username and password are required.", "danger")
             elif len(password) < 10:
                 flash("Password must be at least 10 characters.", "danger")
             elif User.query.filter_by(username=username).first():
                 flash(f"Username '{username}' is already taken.", "danger")
+            elif not allowed:
+                flash(f"Free plan user limit reached ({current}/{limit}). Upgrade to add more users.", "warning")
             else:
-                user = User(username=username, role=role)
+                user = User(username=username, role=role, org_id=org_id, is_active=True)
                 user.password_hash = generate_password_hash(password)
                 db.session.add(user)
                 db.session.commit()
@@ -2633,10 +2687,12 @@ def settings_users():
         elif action == "edit":
             user_id = parse_int(request.form.get("user_id"))
             user = db.session.get(User, user_id)
-            if not user:
+            if not user or user.org_id != org_id or user.is_super_admin:
                 flash("User not found.", "danger")
             else:
                 new_role = request.form.get("role", user.role)
+                if new_role not in roles:
+                    new_role = user.role
                 user.role = new_role
                 new_password = request.form.get("password", "").strip()
                 if new_password:
@@ -2650,7 +2706,7 @@ def settings_users():
         elif action == "delete":
             user_id = parse_int(request.form.get("user_id"))
             user = db.session.get(User, user_id)
-            if not user:
+            if not user or user.org_id != org_id or user.is_super_admin:
                 flash("User not found.", "danger")
             elif user.id == g.user.id:
                 flash("You cannot delete your own account.", "danger")
@@ -2661,8 +2717,7 @@ def settings_users():
 
         return redirect(url_for("main.settings_users"))
 
-    users = User.query.filter_by(org_id=g.user.org_id).order_by(User.username.asc()).all()
-    roles = ["org_admin", "member", "viewer"]
+    users = User.query.filter_by(org_id=org_id).order_by(User.username.asc()).all()
     return render_template("settings_users.html", users=users, roles=roles)
 
 
@@ -2783,10 +2838,15 @@ def _sprint_velocity_data(org_id) -> list[dict]:
     sprints = q.order_by(Sprint.end_date.desc()).limit(8).all()
     result = []
     for s in reversed(sprints):
-        done = Task.query.filter_by(sprint_id=s.id).filter(
+        done_q = Task.query.filter_by(sprint_id=s.id)
+        total_q = Task.query.filter_by(sprint_id=s.id)
+        if org_id:
+            done_q = done_q.filter_by(org_id=org_id)
+            total_q = total_q.filter_by(org_id=org_id)
+        done = done_q.filter(
             Task.status.in_(["Done", "Completed"])
         ).count()
-        total = Task.query.filter_by(sprint_id=s.id).count()
+        total = total_q.count()
         result.append({
             "name": s.name,
             "done": done,

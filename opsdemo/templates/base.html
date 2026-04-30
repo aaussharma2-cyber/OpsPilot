@@ -22,6 +22,7 @@
       </div>
 
       <nav class="sidebar-nav">
+        {% if not g.user.is_super_admin %}
         <a href="{{ url_for('main.dashboard') }}" class="sidebar-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}">
           <span class="sidebar-icon">📊</span><span class="sidebar-label">Dashboard</span>
         </a>
@@ -72,6 +73,8 @@
           <span class="sidebar-icon">⚙️</span><span class="sidebar-label">Settings</span>
         </a>
 
+        {% endif %}
+
         {% if g.user.is_super_admin %}
         <div class="sidebar-section-label">PLATFORM</div>
         <a href="{{ url_for('main.platform_admin') }}" class="sidebar-link {% if request.endpoint and request.endpoint.startswith('main.platform') %}active{% endif %}">
@@ -81,7 +84,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        {% if g.user.org %}
+        {% if g.user.org and not g.user.is_super_admin %}
         <span class="plan-badge plan-{{ g.user.org.plan }}">{{ g.user.org.plan_label }}</span>
         {% endif %}
         <div class="sidebar-user-info">
@@ -98,6 +101,13 @@
       </div>
     </aside>
 
+    {# ── Mobile top bar ── #}
+    <div class="mobile-topbar">
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Open menu">&#9776;</button>
+      <span class="mobile-topbar-title">⚡ OpsPilot</span>
+    </div>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
     {# ── Main area ── #}
     <div class="main-wrap">
       <main>
@@ -113,7 +123,9 @@
         </div>
         {% endif %}
         {% endwith %}
-        
+        {% block content %}{% endblock %}
+      </main>
+    </div>
 
     {% else %}
     {# ── Unauthenticated: full-page ── #}
@@ -130,12 +142,8 @@
       </div>
       {% endif %}
       {% endwith %}
-    {% endif %}
-
       {% block content %}{% endblock %}
     </main>
-    {% if g.user %}
-    </div>
     {% endif %}
 
     <script src="{{ url_for('static', filename='app.js') }}?v={{ static_ver('app.js') }}"></script>

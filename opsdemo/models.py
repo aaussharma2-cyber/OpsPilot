@@ -84,7 +84,7 @@ class User(TimestampMixin, db.Model):
 
     @property
     def is_org_admin(self) -> bool:
-        return self.role in ("org_admin", "admin", "super_admin")
+        return self.role in ("org_admin", "admin")
 
     @property
     def is_super_admin(self) -> bool:
@@ -236,6 +236,7 @@ class TaskHistory(db.Model):
     new_value = db.Column(db.Text, nullable=True)
     changed_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
     changed_by = db.Column(db.String(80), nullable=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 # ── Customisation models ────────────────────────────────────────────────────
@@ -286,8 +287,9 @@ class FieldValue(db.Model):
     )
     value = db.Column(db.Text, nullable=True)
     field_def = db.relationship('FieldDefinition')
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
     __table_args__ = (
-        db.UniqueConstraint('entity_type', 'entity_id', 'field_def_id', name='uq_field_value'),
+        db.UniqueConstraint('entity_type', 'entity_id', 'field_def_id', 'org_id', name='uq_field_value_org'),
     )
 
 
@@ -316,6 +318,7 @@ class WorkflowRun(db.Model):
     status = db.Column(db.String(20), nullable=False, default='ok')
     detail = db.Column(db.Text, nullable=True)
     workflow = db.relationship('Workflow')
+    org_id = db.Column(db.Integer, db.ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True)
 
 
 class AlertLog(db.Model):
