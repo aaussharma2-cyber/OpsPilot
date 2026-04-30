@@ -29,6 +29,12 @@ class Organization(db.Model):
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
 
+    # Brand / document settings
+    logo_path = db.Column(db.String(255), nullable=True)       # relative path under static/uploads/logos/
+    pdf_header_text = db.Column(db.String(200), nullable=True)  # custom header in PDF exports
+    pdf_footer_text = db.Column(db.String(200), nullable=True)  # custom footer in PDF exports
+    email_from_name = db.Column(db.String(120), nullable=True)  # sender display name for outgoing emails
+
     # Plan limits
     _PLAN_USER_LIMITS = {"free": 2, "pro": 25, "enterprise": 9999}
     _PLAN_RECORD_LIMITS = {"free": 5, "pro": 9999, "enterprise": 9999}

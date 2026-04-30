@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Brand &amp; Document Settings</h1>
+    <div class="subtle">Upload your organisation logo and customise PDF and email headers and footers.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Back to Settings</a>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start">
+
+  {# ── Logo upload ── #}
+  <section class="panel">
+    <h2 style="margin-top:0">Organisation Logo</h2>
+    <p class="subtle" style="margin-bottom:1.25rem">
+      Used in invoice emails. Recommended: PNG or SVG, transparent background, at least 200 × 60 px.
+    </p>
+
+    {% if org.logo_path %}
+    <div style="margin-bottom:1rem;padding:1rem;background:var(--input-bg);border:1px solid var(--line);border-radius:8px;text-align:center">
+      <img src="{{ url_for('static', filename=org.logo_path) }}"
+           alt="Current logo"
+           style="max-height:80px;max-width:240px;object-fit:contain">
+      <div style="margin-top:0.5rem;font-size:0.82rem;color:var(--muted)">Current logo</div>
+    </div>
+    {% else %}
+    <div style="margin-bottom:1rem;padding:1.5rem;background:var(--input-bg);border:2px dashed var(--line);border-radius:8px;text-align:center;color:var(--muted);font-size:0.9rem">
+      No logo uploaded yet
+    </div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('main.settings_brand') }}"
+          enctype="multipart/form-data" class="form-grid" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label style="grid-column:1/-1">
+        Upload new logo
+        <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.svg,.webp" style="margin-top:0.35rem">
+        <span class="subtle" style="font-size:0.8rem">PNG, JPG, SVG, GIF or WebP · Max 2 MB</span>
+      </label>
+      <div style="grid-column:1/-1;display:flex;gap:0.75rem;align-items:center">
+        <button type="submit" class="btn primary">Upload Logo</button>
+        {% if org.logo_path %}
+        <button type="submit" name="remove_logo" value="1" class="btn danger small"
+                onclick="return confirm('Remove the current logo?')">Remove Logo</button>
+        {% endif %}
+      </div>
+    </form>
+  </section>
+
+  {# ── PDF & Email config ── #}
+  <section class="panel">
+    <h2 style="margin-top:0">PDF &amp; Email Defaults</h2>
+    <p class="subtle" style="margin-bottom:1.25rem">
+      These values appear in all exported PDFs and outgoing invoice emails.
+    </p>
+
+    <form method="post" action="{{ url_for('main.settings_brand') }}"
+          class="form-grid" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label style="grid-column:1/-1">
+        PDF Header Text
+        <input type="text" name="pdf_header_text"
+               value="{{ org.pdf_header_text or '' }}"
+               placeholder="{{ org.name }} (default: organisation name)"
+               maxlength="200">
+        <span class="subtle" style="font-size:0.8rem">Appears in the top-left corner of every PDF export.</span>
+      </label>
+
+      <label style="grid-column:1/-1">
+        PDF &amp; Email Footer Text
+        <input type="text" name="pdf_footer_text"
+               value="{{ org.pdf_footer_text or '' }}"
+               placeholder="e.g. © {{ org.name }} · ABN 12 345 678 901"
+               maxlength="200">
+        <span class="subtle" style="font-size:0.8rem">Shown at the bottom of PDFs and invoice emails.</span>
+      </label>
+
+      <label style="grid-column:1/-1">
+        Email Sender Display Name
+        <input type="text" name="email_from_name"
+               value="{{ org.email_from_name or '' }}"
+               placeholder="{{ org.name }} (default)"
+               maxlength="120">
+        <span class="subtle" style="font-size:0.8rem">Name shown in recipients' inboxes alongside your sending address.</span>
+      </label>
+
+      <div style="grid-column:1/-1">
+        <button type="submit" class="btn primary">Save Settings</button>
+      </div>
+    </form>
+  </section>
+
+</div>
+
+{# ── Preview ── #}
+{% if org.logo_path or org.pdf_header_text or org.pdf_footer_text %}
+<section class="panel" style="margin-top:1.5rem">
+  <h2 style="margin-top:0">Preview</h2>
+  <div style="background:#1e3a5f;color:#fff;padding:1rem 1.5rem;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center">
+    <div style="display:flex;align-items:center;gap:12px">
+      {% if org.logo_path %}
+      <img src="{{ url_for('static', filename=org.logo_path) }}"
+           alt="logo" style="max-height:32px;max-width:80px;object-fit:contain;border-radius:3px">
+      {% endif %}
+      <strong style="font-size:1rem">{{ org.pdf_header_text or org.name }}</strong>
+    </div>
+    <strong style="font-size:1.2rem;opacity:0.9">INVOICE / EXPORT</strong>
+  </div>
+  <div style="border:1px solid var(--line);border-top:none;padding:1rem 1.5rem;border-radius:0 0 8px 8px;text-align:center;font-size:0.82rem;color:var(--muted)">
+    {{ org.pdf_footer_text or ('Generated by ' ~ org.name) }}
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

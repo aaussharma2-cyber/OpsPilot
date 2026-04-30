@@ -1110,6 +1110,7 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> di
     username = (cfg.get("username") or "").strip()
     password = (cfg.get("password") or "").strip()
     from_addr = (cfg.get("from_addr") or username).strip()
+    from_name = (cfg.get("from_name") or "").strip()
     use_tls = str(cfg.get("use_tls", "true")).lower() != "false"
 
     if not host:
@@ -1120,7 +1121,11 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, cfg: dict) -> di
     provider_info = f"{host}:{port} (TLS={use_tls})"
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_addr
+    if from_name:
+        from email.utils import formataddr as _formataddr
+        msg["From"] = _formataddr((from_name, from_addr))
+    else:
+        msg["From"] = from_addr
     msg["To"] = to_email
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 

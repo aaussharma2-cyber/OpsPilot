@@ -38,6 +38,15 @@
     <span class="badge info">{{ user_count }} user{{ 's' if user_count != 1 else '' }}</span>
   </a>
 
+  <a href="{{ url_for('main.settings_brand') }}" class="card settings-card">
+    <div class="settings-icon">🏷</div>
+    <h3>Brand &amp; Documents</h3>
+    <p>Upload your logo and set custom headers and footers for PDF exports and outgoing invoice emails.</p>
+    <span class="badge {{ 'success' if g.user.org and g.user.org.logo_path else 'info' }}">
+      {{ 'Logo uploaded' if g.user.org and g.user.org.logo_path else 'No logo yet' }}
+    </span>
+  </a>
+
   <a href="{{ url_for('main.sprint_list') }}" class="card settings-card">
     <div class="settings-icon">🏁</div>
     <h3>Sprint Management</h3>

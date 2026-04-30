@@ -15,7 +15,7 @@ from .models import db, User, Organization
 try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
-    limiter = Limiter(key_func=get_remote_address, default_limits=[])
+    limiter = Limiter(key_func=get_remote_address, default_limits=[], storage_uri="memory://")
     _limiter_available = True
 except ImportError:
     limiter = None  # type: ignore
@@ -45,18 +45,26 @@ def _run_migrations(app: Flask) -> None:
                 "sync_log", "audit_log",
             ]
             for tbl in org_fk_tables:
-                _safe_add(f"ALTER TABLE {tbl} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
+                # "user" is a reserved word in PostgreSQL — must be quoted
+                quoted = f'"{tbl}"' if tbl == "user" else tbl
+                _safe_add(f"ALTER TABLE {quoted} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
 
-            # User model new columns
-            _safe_add("ALTER TABLE user ADD COLUMN email VARCHAR(120)")
-            _safe_add("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1")
+            # Organization brand columns
+            _safe_add("ALTER TABLE organization ADD COLUMN logo_path VARCHAR(255)")
+            _safe_add("ALTER TABLE organization ADD COLUMN pdf_header_text VARCHAR(200)")
+            _safe_add("ALTER TABLE organization ADD COLUMN pdf_footer_text VARCHAR(200)")
+            _safe_add("ALTER TABLE organization ADD COLUMN email_from_name VARCHAR(120)")
+
+            # User model new columns (quote "user" — reserved word in PostgreSQL)
+            _safe_add('ALTER TABLE "user" ADD COLUMN email VARCHAR(120)')
+            _safe_add('ALTER TABLE "user" ADD COLUMN is_active BOOLEAN DEFAULT TRUE')
 
             # TaskHistory: changed_by
             _safe_add("ALTER TABLE task_history ADD COLUMN changed_by VARCHAR(80)")
 
             # Migrate existing admin role → org_admin
             try:
-                conn.execute(db.text("UPDATE user SET role='org_admin' WHERE role='admin'"))
+                conn.execute(db.text('UPDATE "user" SET role=\'org_admin\' WHERE role=\'admin\''))
                 conn.commit()
             except Exception:
                 pass
@@ -83,7 +91,7 @@ def _ensure_default_org(conn) -> None:
         else:
             conn.execute(db.text(
                 "INSERT INTO organization (name, slug, plan, is_active, created_at) "
-                "VALUES ('Default Organisation', 'default', 'free', 1, datetime('now'))"
+                "VALUES ('Default Organisation', 'default', 'free', TRUE, CURRENT_TIMESTAMP)"
             ))
             conn.commit()
             result = conn.execute(db.text("SELECT id FROM organization WHERE slug='default' LIMIT 1"))
@@ -102,13 +110,14 @@ def _ensure_default_org(conn) -> None:
         ]
         for tbl in tables:
             try:
-                conn.execute(db.text(f"UPDATE {tbl} SET org_id={org_id} WHERE org_id IS NULL"))
+                quoted = f'"{tbl}"' if tbl == "user" else tbl
+                conn.execute(db.text(f"UPDATE {quoted} SET org_id={org_id} WHERE org_id IS NULL"))
                 conn.commit()
             except Exception:
                 pass
         # Upgrade org_admin role
         try:
-            conn.execute(db.text("UPDATE user SET role='org_admin' WHERE role='admin'"))
+            conn.execute(db.text('UPDATE "user" SET role=\'org_admin\' WHERE role=\'admin\''))
             conn.commit()
         except Exception:
             pass
