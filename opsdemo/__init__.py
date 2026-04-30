@@ -24,53 +24,52 @@ except ImportError:
 
 def _run_migrations(app: Flask) -> None:
     """Safe, idempotent schema migrations — adds columns missing from older DBs."""
-    with app.app_context():
-        engine = db.engine
-        with engine.connect() as conn:
-            _safe_add = lambda sql: _try_exec(conn, sql)
+    engine = db.engine
+    with engine.connect() as conn:
+        _safe_add = lambda sql: _try_exec(conn, sql)
 
-            # Legacy columns
-            _safe_add("ALTER TABLE task ADD COLUMN sprint_id INTEGER REFERENCES sprint(id)")
-            _safe_add("ALTER TABLE dashboard_widget ADD COLUMN report_id INTEGER REFERENCES dashboard_report(id) ON DELETE CASCADE")
-            _safe_add("ALTER TABLE renewal ADD COLUMN contact_name VARCHAR(120)")
-            _safe_add("ALTER TABLE renewal ADD COLUMN contact_email VARCHAR(120)")
+        # Legacy columns
+        _safe_add("ALTER TABLE task ADD COLUMN sprint_id INTEGER REFERENCES sprint(id)")
+        _safe_add("ALTER TABLE dashboard_widget ADD COLUMN report_id INTEGER REFERENCES dashboard_report(id) ON DELETE CASCADE")
+        _safe_add("ALTER TABLE renewal ADD COLUMN contact_name VARCHAR(120)")
+        _safe_add("ALTER TABLE renewal ADD COLUMN contact_email VARCHAR(120)")
 
-            # Multi-tenancy: organization table is created by db.create_all()
-            # Add org_id to all data tables
-            org_fk_tables = [
-                "user", "sprint", "task", "contact", "vendor", "asset",
-                "inventory_item", "invoice", "renewal", "sale",
-                "board_column", "field_definition", "workflow", "alert_log",
-                "dashboard_widget", "dashboard_report", "integration_config",
-                "sync_log", "audit_log",
-            ]
-            for tbl in org_fk_tables:
-                # "user" is a reserved word in PostgreSQL — must be quoted
-                quoted = f'"{tbl}"' if tbl == "user" else tbl
-                _safe_add(f"ALTER TABLE {quoted} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
+        # Multi-tenancy: organization table is created by db.create_all()
+        # Add org_id to all data tables
+        org_fk_tables = [
+            "user", "sprint", "task", "contact", "vendor", "asset",
+            "inventory_item", "invoice", "renewal", "sale",
+            "board_column", "field_definition", "workflow", "alert_log",
+            "dashboard_widget", "dashboard_report", "integration_config",
+            "sync_log", "audit_log",
+        ]
+        for tbl in org_fk_tables:
+            # "user" is a reserved word in PostgreSQL — must be quoted
+            quoted = f'"{tbl}"' if tbl == "user" else tbl
+            _safe_add(f"ALTER TABLE {quoted} ADD COLUMN org_id INTEGER REFERENCES organization(id)")
 
-            # Organization brand columns
-            _safe_add("ALTER TABLE organization ADD COLUMN logo_path VARCHAR(255)")
-            _safe_add("ALTER TABLE organization ADD COLUMN pdf_header_text VARCHAR(200)")
-            _safe_add("ALTER TABLE organization ADD COLUMN pdf_footer_text VARCHAR(200)")
-            _safe_add("ALTER TABLE organization ADD COLUMN email_from_name VARCHAR(120)")
+        # Organization brand columns
+        _safe_add("ALTER TABLE organization ADD COLUMN logo_path VARCHAR(255)")
+        _safe_add("ALTER TABLE organization ADD COLUMN pdf_header_text VARCHAR(200)")
+        _safe_add("ALTER TABLE organization ADD COLUMN pdf_footer_text VARCHAR(200)")
+        _safe_add("ALTER TABLE organization ADD COLUMN email_from_name VARCHAR(120)")
 
-            # User model new columns (quote "user" — reserved word in PostgreSQL)
-            _safe_add('ALTER TABLE "user" ADD COLUMN email VARCHAR(120)')
-            _safe_add('ALTER TABLE "user" ADD COLUMN is_active BOOLEAN DEFAULT TRUE')
+        # User model new columns (quote "user" — reserved word in PostgreSQL)
+        _safe_add('ALTER TABLE "user" ADD COLUMN email VARCHAR(120)')
+        _safe_add('ALTER TABLE "user" ADD COLUMN is_active BOOLEAN DEFAULT TRUE')
 
-            # TaskHistory: changed_by
-            _safe_add("ALTER TABLE task_history ADD COLUMN changed_by VARCHAR(80)")
+        # TaskHistory: changed_by
+        _safe_add("ALTER TABLE task_history ADD COLUMN changed_by VARCHAR(80)")
 
-            # Migrate existing admin role → org_admin
-            try:
-                conn.execute(db.text('UPDATE "user" SET role=\'org_admin\' WHERE role=\'admin\''))
-                conn.commit()
-            except Exception:
-                pass
+        # Migrate existing admin role → org_admin
+        try:
+            conn.execute(db.text('UPDATE "user" SET role=\'org_admin\' WHERE role=\'admin\''))
+            conn.commit()
+        except Exception:
+            pass
 
-            # Create default organization and assign existing users/data to it
-            _ensure_default_org(conn)
+        # Create default organization and assign existing users/data to it
+        _ensure_default_org(conn)
 
 
 def _try_exec(conn, sql: str) -> None:
