@@ -90,6 +90,11 @@
               {% endif %}
               <a href="{{ url_for('main.invoice_export_pdf', invoice_id=invoice.id) }}"
                  class="btn small" title="Export PDF" style="display:inline-block;">PDF</a>
+              <button type="button" class="btn small"
+                      onclick="openEmailModal({{ invoice.id }}, '{{ invoice.party_name | e }}')"
+                      {% if not email_configured %}title="Configure email in Settings → Email" style="opacity:0.5"{% endif %}>
+                Email
+              </button>
               <form method="post" action="{{ url_for('main.invoice_delete', invoice_id=invoice.id) }}" class="inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="btn small danger" type="submit">Delete</button>
@@ -104,4 +109,42 @@
     </div>
   </section>
 </div>
+{# ── Send email modal ── #}
+<div id="email-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:var(--card,#fff);border-radius:12px;padding:2rem;width:min(420px,90vw);box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <h3 style="margin:0 0 1rem">Send invoice by email</h3>
+    <form method="post" id="email-modal-form" class="form-grid" data-disable-on-submit>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label style="grid-column:1/-1">
+        Recipient email
+        <input type="email" name="recipient_email" id="modal-recipient-email" required placeholder="client@example.com">
+      </label>
+      <label style="grid-column:1/-1">
+        Recipient name <span class="subtle" style="font-size:0.82rem">(optional)</span>
+        <input type="text" name="recipient_name" id="modal-recipient-name" placeholder="e.g. John Smith">
+      </label>
+      <div style="display:flex;gap:0.75rem;grid-column:1/-1;margin-top:0.25rem;">
+        <button type="submit" class="btn primary">Send email</button>
+        <button type="button" class="btn" onclick="closeEmailModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openEmailModal(invoiceId, partyName) {
+  var modal = document.getElementById('email-modal');
+  document.getElementById('email-modal-form').action = '/invoices/' + invoiceId + '/send_email';
+  document.getElementById('modal-recipient-email').value = '';
+  document.getElementById('modal-recipient-name').value = '';
+  document.getElementById('modal-recipient-name').placeholder = partyName || '';
+  modal.style.display = 'flex';
+}
+function closeEmailModal() {
+  document.getElementById('email-modal').style.display = 'none';
+}
+document.getElementById('email-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeEmailModal();
+});
+</script>
 {% endblock %}

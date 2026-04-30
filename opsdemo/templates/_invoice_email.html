@@ -42,7 +42,7 @@
     <div class="body">
       <p class="greeting">Dear {{ recipient_name }},</p>
       <p style="color:#475569;font-size:0.95rem;margin-bottom:24px;">
-        Please find below the invoice for <strong>{{ renewal.title }}</strong>. Payment is due by the date shown below.
+        Please find below the invoice{% if renewal %} for <strong>{{ renewal.title }}</strong>{% endif %}. Payment is due by the date shown below.
       </p>
 
       <div class="invoice-box">
@@ -50,6 +50,7 @@
           <span class="label">Invoice number</span>
           <span class="value">{{ invoice.reference }}</span>
         </div>
+        {% if renewal %}
         <div class="invoice-row">
           <span class="label">Renewal</span>
           <span class="value">{{ renewal.title }}</span>
@@ -64,6 +65,12 @@
         <div class="invoice-row">
           <span class="label">Category</span>
           <span class="value">{{ renewal.category }}</span>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="invoice-row">
+          <span class="label">Party</span>
+          <span class="value">{{ invoice.party_name }}</span>
         </div>
         {% endif %}
         <div class="invoice-row">

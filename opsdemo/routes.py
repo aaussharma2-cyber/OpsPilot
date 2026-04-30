@@ -1323,7 +1323,9 @@ def invoices():
     invoices_list = Invoice.query.order_by(Invoice.due_date.asc(), Invoice.created_at.desc()).all()
     fv_map = get_field_values_map("invoice", [i.id for i in invoices_list])
     active_renewals = Renewal.query.filter(Renewal.status == "Active").order_by(Renewal.renew_on.asc()).all()
-    return render_template("invoices.html", invoices=invoices_list, today=today, field_defs=field_defs, fv_map=fv_map, active_renewals=active_renewals)
+    email_configured = _email_configured(get_smtp_config())
+    return render_template("invoices.html", invoices=invoices_list, today=today, field_defs=field_defs,
+                           fv_map=fv_map, active_renewals=active_renewals, email_configured=email_configured)
 
 
 @bp.route("/invoices/<int:invoice_id>/mark_paid", methods=["POST"])
@@ -1354,6 +1356,54 @@ def invoice_delete(invoice_id: int):
         db.session.commit()
         flash("Invoice deleted.", "success")
     return redirect(url_for("main.invoices"))
+
+
+@bp.route("/invoices/<int:invoice_id>/send_email", methods=["POST"])
+@login_required
+def invoice_send_email(invoice_id: int):
+    verify_csrf()
+    invoice = db.session.get(Invoice, invoice_id)
+    if not invoice:
+        flash("Invoice not found.", "danger")
+        return redirect(url_for("main.invoices"))
+
+    recipient_email = request.form.get("recipient_email", "").strip()
+    recipient_name = request.form.get("recipient_name", "").strip()
+
+    if not recipient_email:
+        flash("Recipient email is required.", "danger")
+        return redirect(url_for("main.invoices"))
+
+    smtp_cfg = get_smtp_config()
+    if not _email_configured(smtp_cfg):
+        flash("Email is not configured. Go to Settings → Email.", "warning")
+        return redirect(url_for("main.invoices"))
+
+    try:
+        html_body = render_template(
+            "_invoice_email.html",
+            invoice=invoice,
+            renewal=None,
+            recipient_name=recipient_name or invoice.party_name or "Valued Customer",
+        )
+        subject = f"Invoice {invoice.reference} — {invoice.party_name}"
+        result = send_invoice_email(recipient_email, subject, html_body, smtp_cfg)
+        log_audit("email_send", "invoices", status="ok", related_record=invoice.reference,
+                  message=f"Invoice email sent via {result.get('provider')} to {recipient_email}.")
+        flash(f"Invoice {invoice.reference} sent to {recipient_email}.", "success")
+    except Exception as exc:
+        log_audit("email_send", "invoices", status="error", related_record=invoice.reference,
+                  message=f"Email FAILED for {invoice.reference} to {recipient_email}: {exc}")
+        flash(f"Email failed: {exc}", "warning")
+
+    return redirect(url_for("main.invoices"))
+
+
+def _email_configured(cfg: dict) -> bool:
+    provider = (cfg.get("provider") or "smtp").lower()
+    if provider in ("sendgrid", "resend"):
+        return bool(cfg.get("api_key"))
+    return bool(cfg.get("host"))
 
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────
@@ -1731,11 +1781,11 @@ def renewal_send_invoice(renewal_id: int):
 
     if do_send_email and recipient_email:
         smtp_cfg = get_smtp_config()
-        if not smtp_cfg.get("host"):
+        if not _email_configured(smtp_cfg):
             log_audit("email_send", "renewals", status="error", related_record=invoice.reference,
-                      message=f"Email not sent for {invoice.reference} — SMTP not configured. "
+                      message=f"Email not sent for {invoice.reference} — email provider not configured. "
                                f"Recipient: {recipient_email}, subject: 'Invoice {invoice.reference}'")
-            flash(f"Invoice {invoice.reference} created, but email not sent — SMTP is not configured. "
+            flash(f"Invoice {invoice.reference} created, but email not sent — email is not configured. "
                   "Configure it in Settings → Email.", "warning")
         else:
             try:
@@ -1771,7 +1821,7 @@ def renewal_send_invoice(renewal_id: int):
                     message=(
                         f"Email send FAILED for invoice {invoice.reference} to {recipient_email}. "
                         f"Error: {safe_msg}. "
-                        f"SMTP host: {smtp_cfg.get('host', 'unknown')}:{smtp_cfg.get('port', '?')}"
+                        f"Provider: {smtp_cfg.get('provider', 'smtp')}"
                     ),
                 )
                 flash(f"Invoice {invoice.reference} created, but email failed: {safe_msg}", "warning")
