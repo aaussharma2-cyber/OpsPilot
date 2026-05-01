@@ -108,31 +108,14 @@
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
-    {# ── Main area ── #}
+    {# ── Main area (authenticated) ── #}
     <div class="main-wrap">
-      <main>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="flash-list" id="flash-list">
-          {% for category, message in messages %}
-          <div class="flash {{ category }}" data-autohide="{{ 'false' if category == 'danger' else 'true' }}">
-            <span>{{ message }}</span>
-            <button class="flash-close" aria-label="Dismiss" type="button">✕</button>
-          </div>
-          {% endfor %}
-        </div>
-        {% endif %}
-        {% endwith %}
-        {% block content %}{% endblock %}
-      </main>
-    </div>
+    {% endif %}
 
-    {% else %}
-    {# ── Unauthenticated: full-page ── #}
     <main>
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
-      <div class="flash-list" id="flash-list" style="max-width:480px;margin:1rem auto">
+      <div class="flash-list" id="flash-list"{% if not g.user %} style="max-width:480px;margin:1rem auto"{% endif %}>
         {% for category, message in messages %}
         <div class="flash {{ category }}" data-autohide="{{ 'false' if category == 'danger' else 'true' }}">
           <span>{{ message }}</span>
@@ -144,6 +127,9 @@
       {% endwith %}
       {% block footer_scripts %}{% endblock %}
     </main>
+
+    {% if g.user %}
+    </div>{# /main-wrap #}
     {% endif %}
 
     <script src="{{ url_for('static', filename='app.js') }}?v={{ static_ver('app.js') }}"></script>
