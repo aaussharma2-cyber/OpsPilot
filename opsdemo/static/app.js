@@ -9,11 +9,15 @@
   function openSidebar() {
     sidebar?.classList.add('is-open');
     sidebarOverlay?.classList.add('is-open');
+    sidebarToggle?.setAttribute('aria-expanded', 'true');
+    document.body.classList.add('sidebar-open');
     document.body.style.overflow = 'hidden';
   }
   function closeSidebar() {
     sidebar?.classList.remove('is-open');
     sidebarOverlay?.classList.remove('is-open');
+    sidebarToggle?.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('sidebar-open');
     document.body.style.overflow = '';
   }
 
@@ -23,6 +27,12 @@
   sidebar?.querySelectorAll('.sidebar-link').forEach(link =>
     link.addEventListener('click', closeSidebar)
   );
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSidebar();
+  });
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 900) closeSidebar();
+  });
 
   // ── Kanban drag-and-drop ────────────────────────────────────────────────
   const cards = document.querySelectorAll('article[data-task-id]');

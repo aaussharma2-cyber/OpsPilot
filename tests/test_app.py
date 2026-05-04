@@ -1,4 +1,5 @@
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -599,6 +600,93 @@ def test_shopify_missing_config_shows_setup_message(client, app):
     assert r.status_code == 200
     html = r.get_data(as_text=True)
     assert "Running locally" in html or "public callback URL" in html
+
+
+def test_core_module_pages_load(client):
+    """Smoke test every major module page for template/query regressions."""
+    login(client)
+    for path in [
+        "/dashboard",
+        "/tasks",
+        "/sprints",
+        "/crm",
+        "/vendors",
+        "/assets",
+        "/inventory",
+        "/invoices",
+        "/renewals",
+        "/sales",
+        "/reports",
+        "/notifications",
+        "/settings",
+        "/settings/integrations",
+        "/settings/integrations/shopify",
+        "/settings/theme",
+        "/settings/email",
+        "/settings/board",
+        "/settings/fields",
+        "/settings/workflows",
+        "/settings/users",
+        "/settings/brand",
+        "/audit-log",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200, path
+
+
+def test_signup_works_after_legacy_board_column_unique_migration():
+    """Existing DBs with globally unique board columns must still allow signup."""
+    db_file = ROOT / "instance" / "legacy_signup.db"
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        path = Path(f"{db_file}{suffix}")
+        if path.exists():
+            path.unlink()
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "CREATE TABLE board_column ("
+        "id INTEGER PRIMARY KEY, "
+        "name VARCHAR(50) NOT NULL UNIQUE, "
+        "position INTEGER NOT NULL, "
+        "color VARCHAR(20)"
+        ")"
+    )
+    for pos, name in enumerate(["Backlog", "In Progress", "Blocked", "Review", "Done"]):
+        conn.execute(
+            "INSERT INTO board_column (name, position, color) VALUES (?, ?, NULL)",
+            (name, pos),
+        )
+    conn.commit()
+    conn.close()
+
+    try:
+        legacy_app = create_app(
+            {
+                "TESTING": True,
+                "SQLALCHEMY_DATABASE_URI": f"sqlite:///{db_file}",
+                "DEMO_USERNAME": "admin",
+                "DEMO_PASSWORD": "ChangeMe123!",
+                "SECRET_KEY": "test-secret",
+                "CREDENTIAL_ENCRYPTION_KEY": "test-credential-key",
+            }
+        )
+        client = legacy_app.test_client()
+        signup(client, org_name="Legacy Signup", username="legacyadmin", email="legacy@example.test")
+        with legacy_app.app_context():
+            rows = db.session.execute(db.text("PRAGMA index_list('board_column')")).all()
+            unique_sets = []
+            for row in rows:
+                if row[2]:
+                    cols = db.session.execute(db.text(f"PRAGMA index_info('{row[1]}')")).all()
+                    unique_sets.append(tuple(col[2] for col in cols))
+            assert ("name",) not in unique_sets
+            assert ("name", "org_id") in unique_sets
+            db.session.remove()
+            db.engine.dispose()
+    finally:
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            path = Path(f"{db_file}{suffix}")
+            if path.exists():
+                path.unlink()
 
 
 def test_self_signup_org_is_isolated_from_default_data(client, app):

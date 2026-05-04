@@ -67,6 +67,7 @@ def _run_migrations(app: Flask) -> None:
 
         # Create default organization and assign existing users/data to it
         _ensure_default_org(conn)
+        _migrate_tenant_unique_constraints(conn)
 
 
 def _try_exec(conn, sql: str) -> None:
@@ -129,6 +130,229 @@ def _ensure_default_org(conn) -> None:
             conn.rollback()
         except Exception:
             pass
+
+
+def _migrate_tenant_unique_constraints(conn) -> None:
+    """Replace old global unique constraints with org-aware uniqueness."""
+    if conn.dialect.name == "sqlite":
+        _sqlite_rebuild_tenant_unique_tables(conn)
+    else:
+        for sql in [
+            "ALTER TABLE board_column DROP CONSTRAINT IF EXISTS board_column_name_key",
+            "ALTER TABLE field_definition DROP CONSTRAINT IF EXISTS field_definition_entity_type_field_key_key",
+            "ALTER TABLE field_definition DROP CONSTRAINT IF EXISTS uq_field_entity_key",
+            "ALTER TABLE integration_config DROP CONSTRAINT IF EXISTS integration_config_integration_key_key",
+            "ALTER TABLE integration_config DROP CONSTRAINT IF EXISTS uq_integration_key",
+            "ALTER TABLE inventory_item DROP CONSTRAINT IF EXISTS inventory_item_sku_key",
+            "ALTER TABLE invoice DROP CONSTRAINT IF EXISTS invoice_reference_key",
+            "ALTER TABLE sale DROP CONSTRAINT IF EXISTS sale_order_ref_key",
+            "ALTER TABLE field_value DROP CONSTRAINT IF EXISTS uq_field_value",
+            "ALTER TABLE field_value DROP CONSTRAINT IF EXISTS field_value_entity_type_entity_id_field_def_id_key",
+        ]:
+            _try_exec(conn, sql)
+
+    for sql in [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_col_name_org_idx ON board_column (name, org_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_field_entity_key_org_idx ON field_definition (entity_type, field_key, org_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_integration_key_org_idx ON integration_config (integration, key, org_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sku_org_idx ON inventory_item (sku, org_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_ref_org_idx ON invoice (reference, org_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sale_ref_org_idx ON sale (order_ref, org_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_field_value_org_idx ON field_value (entity_type, entity_id, field_def_id, org_id)",
+    ]:
+        _try_exec(conn, sql)
+
+
+def _sqlite_unique_columns(conn, table: str) -> set[tuple[str, ...]]:
+    uniques: set[tuple[str, ...]] = set()
+    try:
+        indexes = conn.execute(db.text(f"PRAGMA index_list('{table}')")).fetchall()
+        for idx in indexes:
+            if not idx[2]:
+                continue
+            cols = conn.execute(db.text(f"PRAGMA index_info('{idx[1]}')")).fetchall()
+            uniques.add(tuple(col[2] for col in cols))
+    except Exception:
+        pass
+    return uniques
+
+
+def _sqlite_rebuild_tenant_unique_tables(conn) -> None:
+    rebuilds = {
+        "board_column": {
+            "legacy": {("name",)},
+            "create": """
+                CREATE TABLE board_column__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    name VARCHAR(50) NOT NULL,
+                    position INTEGER NOT NULL,
+                    color VARCHAR(20),
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE
+                )
+            """,
+            "columns": ["id", "name", "position", "color", "org_id"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_board_column_org_id ON board_column (org_id)",
+            ],
+        },
+        "field_definition": {
+            "legacy": {("entity_type", "field_key")},
+            "create": """
+                CREATE TABLE field_definition__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    entity_type VARCHAR(30) NOT NULL,
+                    name VARCHAR(60) NOT NULL,
+                    field_key VARCHAR(60) NOT NULL,
+                    field_type VARCHAR(20) NOT NULL,
+                    options TEXT,
+                    position INTEGER NOT NULL,
+                    required BOOLEAN NOT NULL,
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE
+                )
+            """,
+            "columns": ["id", "entity_type", "name", "field_key", "field_type", "options", "position", "required", "org_id"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_field_definition_entity_type ON field_definition (entity_type)",
+                "CREATE INDEX IF NOT EXISTS ix_field_definition_org_id ON field_definition (org_id)",
+            ],
+        },
+        "integration_config": {
+            "legacy": {("integration", "key")},
+            "create": """
+                CREATE TABLE integration_config__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    integration VARCHAR(40) NOT NULL,
+                    key VARCHAR(80) NOT NULL,
+                    value TEXT,
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE
+                )
+            """,
+            "columns": ["id", "integration", "key", "value", "org_id"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_integration_config_integration ON integration_config (integration)",
+                "CREATE INDEX IF NOT EXISTS ix_integration_config_org_id ON integration_config (org_id)",
+            ],
+        },
+        "inventory_item": {
+            "legacy": {("sku",)},
+            "create": """
+                CREATE TABLE inventory_item__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    sku VARCHAR(60) NOT NULL,
+                    name VARCHAR(120) NOT NULL,
+                    category VARCHAR(80),
+                    warehouse VARCHAR(80) NOT NULL,
+                    qty_on_hand INTEGER NOT NULL,
+                    reorder_level INTEGER NOT NULL,
+                    unit_cost NUMERIC(12, 2) NOT NULL,
+                    sale_price NUMERIC(12, 2) NOT NULL,
+                    expiry_date DATE,
+                    notes TEXT,
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """,
+            "columns": ["id", "sku", "name", "category", "warehouse", "qty_on_hand", "reorder_level", "unit_cost", "sale_price", "expiry_date", "notes", "org_id", "created_at", "updated_at"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_inventory_item_sku ON inventory_item (sku)",
+                "CREATE INDEX IF NOT EXISTS ix_inventory_item_expiry_date ON inventory_item (expiry_date)",
+                "CREATE INDEX IF NOT EXISTS ix_inventory_item_org_id ON inventory_item (org_id)",
+            ],
+        },
+        "invoice": {
+            "legacy": {("reference",)},
+            "create": """
+                CREATE TABLE invoice__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    kind VARCHAR(20) NOT NULL,
+                    party_name VARCHAR(120) NOT NULL,
+                    reference VARCHAR(80) NOT NULL,
+                    amount NUMERIC(12, 2) NOT NULL,
+                    due_date DATE NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    paid_on DATE,
+                    notes TEXT,
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """,
+            "columns": ["id", "kind", "party_name", "reference", "amount", "due_date", "status", "paid_on", "notes", "org_id", "created_at", "updated_at"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_invoice_kind ON invoice (kind)",
+                "CREATE INDEX IF NOT EXISTS ix_invoice_due_date ON invoice (due_date)",
+                "CREATE INDEX IF NOT EXISTS ix_invoice_status ON invoice (status)",
+                "CREATE INDEX IF NOT EXISTS ix_invoice_org_id ON invoice (org_id)",
+            ],
+        },
+        "sale": {
+            "legacy": {("order_ref",)},
+            "create": """
+                CREATE TABLE sale__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    order_ref VARCHAR(80) NOT NULL,
+                    customer_name VARCHAR(120) NOT NULL,
+                    order_date DATE NOT NULL,
+                    channel VARCHAR(80),
+                    revenue NUMERIC(12, 2) NOT NULL,
+                    cost NUMERIC(12, 2) NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """,
+            "columns": ["id", "order_ref", "customer_name", "order_date", "channel", "revenue", "cost", "quantity", "org_id", "created_at", "updated_at"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_sale_order_date ON sale (order_date)",
+                "CREATE INDEX IF NOT EXISTS ix_sale_org_id ON sale (org_id)",
+            ],
+        },
+        "field_value": {
+            "legacy": {("entity_type", "entity_id", "field_def_id")},
+            "create": """
+                CREATE TABLE field_value__new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    entity_type VARCHAR(30) NOT NULL,
+                    entity_id INTEGER NOT NULL,
+                    field_def_id INTEGER NOT NULL REFERENCES field_definition(id) ON DELETE CASCADE,
+                    value TEXT,
+                    org_id INTEGER REFERENCES organization(id) ON DELETE CASCADE
+                )
+            """,
+            "columns": ["id", "entity_type", "entity_id", "field_def_id", "value", "org_id"],
+            "indexes": [
+                "CREATE INDEX IF NOT EXISTS ix_field_value_entity_type ON field_value (entity_type)",
+                "CREATE INDEX IF NOT EXISTS ix_field_value_entity_id ON field_value (entity_id)",
+                "CREATE INDEX IF NOT EXISTS ix_field_value_org_id ON field_value (org_id)",
+            ],
+        },
+    }
+
+    for table, spec in rebuilds.items():
+        if _sqlite_unique_columns(conn, table).isdisjoint(spec["legacy"]):
+            continue
+        tmp = f"{table}__new"
+        columns = ", ".join(spec["columns"])
+        try:
+            conn.execute(db.text("PRAGMA foreign_keys=OFF"))
+            conn.execute(db.text(f"DROP TABLE IF EXISTS {tmp}"))
+            conn.execute(db.text(spec["create"]))
+            conn.execute(db.text(f"INSERT INTO {tmp} ({columns}) SELECT {columns} FROM {table}"))
+            conn.execute(db.text(f"DROP TABLE {table}"))
+            conn.execute(db.text(f"ALTER TABLE {tmp} RENAME TO {table}"))
+            for index_sql in spec["indexes"]:
+                conn.execute(db.text(index_sql))
+            conn.execute(db.text("PRAGMA foreign_keys=ON"))
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+                conn.execute(db.text("PRAGMA foreign_keys=ON"))
+                conn.commit()
+            except Exception:
+                pass
 
 
 _SECURITY_ALERT_SPECS = [
