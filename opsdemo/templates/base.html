@@ -22,7 +22,6 @@
       </div>
 
       <nav class="sidebar-nav">
-        {% if not g.user.is_super_admin %}
         <a href="{{ url_for('main.dashboard') }}" class="sidebar-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}">
           <span class="sidebar-icon">📊</span><span class="sidebar-label">Dashboard</span>
         </a>
@@ -72,8 +71,6 @@
         <a href="{{ url_for('main.settings') }}" class="sidebar-link {% if request.endpoint and request.endpoint.startswith('main.settings') %}active{% endif %}">
           <span class="sidebar-icon">⚙️</span><span class="sidebar-label">Settings</span>
         </a>
-
-        {% endif %}
 
         {% if g.user.is_super_admin %}
         <div class="sidebar-section-label">PLATFORM</div>
