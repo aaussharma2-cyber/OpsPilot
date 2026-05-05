@@ -59,7 +59,7 @@ def _run_migrations(app: Flask) -> None:
         _safe_add("ALTER TABLE app_user ADD COLUMN email VARCHAR(120)")
         _safe_add("ALTER TABLE app_user ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
         _safe_add("ALTER TABLE app_user ADD COLUMN reset_token_hash VARCHAR(255)")
-        _safe_add("ALTER TABLE app_user ADD COLUMN reset_token_expires_at DATETIME")
+        _safe_add("ALTER TABLE app_user ADD COLUMN reset_token_expires_at TIMESTAMP")
         _safe_add("CREATE INDEX IF NOT EXISTS ix_app_user_reset_token_hash ON app_user (reset_token_hash)")
 
         # TaskHistory: changed_by
