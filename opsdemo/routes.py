@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -56,6 +57,7 @@ from .services import (
     get_field_defs,
     get_field_values_map,
     get_integration_config,
+    get_platform_integration_config,
     get_report_data,
     get_smtp_config,
     get_sync_logs,
@@ -72,6 +74,7 @@ from .services import (
     send_test_email,
     test_api_connection,
     set_integration_config,
+    set_platform_integration_config,
     slugify,
     sync_shopify_customers,
     sync_shopify_orders,
@@ -108,6 +111,60 @@ def handle_validation_error(error):
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
+def _password_reset_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _email_configured(cfg: dict[str, str]) -> bool:
+    provider = (cfg.get("provider") or "smtp").lower()
+    if provider in ("sendgrid", "resend"):
+        return bool(cfg.get("api_key") and cfg.get("from_addr"))
+    return bool(cfg.get("host") and (cfg.get("from_addr") or cfg.get("username")))
+
+
+def _send_password_reset_email(user: User, reset_url: str) -> bool:
+    cfg = get_platform_integration_config("platform_smtp")
+    if not _email_configured(cfg):
+        log_audit(
+            "password_reset_email",
+            "auth",
+            status="warning",
+            related_record=user.username,
+            message="Password reset requested, but platform email is not configured.",
+        )
+        return False
+    try:
+        send_invoice_email(
+            user.email or "",
+            "Reset your OpsPilot password",
+            (
+                f"<p>Hello {user.username},</p>"
+                "<p>Use the secure link below to reset your OpsPilot password. "
+                "This link expires in 1 hour.</p>"
+                f"<p><a href=\"{reset_url}\">Reset password</a></p>"
+                "<p>If you did not request this, you can ignore this email.</p>"
+            ),
+            cfg,
+        )
+        log_audit(
+            "password_reset_email",
+            "auth",
+            status="ok",
+            related_record=user.username,
+            message=f"Password reset email sent to {user.email}.",
+        )
+        return True
+    except ValueError as exc:
+        log_audit(
+            "password_reset_email",
+            "auth",
+            status="error",
+            related_record=user.username,
+            message=f"Password reset email failed: {exc}",
+        )
+        return False
+
+
 @bp.route("/")
 def index():
     if g.get("user"):
@@ -132,6 +189,16 @@ def login():
         password = request.form.get("password", "")
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password_hash, password):
+            if not user.is_active:
+                log_audit("login_failed", "auth", status="warning",
+                          message=f"Inactive user '{username}' attempted to log in")
+                flash("This account is inactive. Contact your administrator.", "danger")
+                return render_template("login.html")
+            if user.org and not user.org.is_active and not user.is_super_admin:
+                log_audit("login_failed", "auth", status="warning",
+                          message=f"Suspended organisation login attempt for '{username}'")
+                flash("This organisation is suspended. Contact the platform owner.", "danger")
+                return render_template("login.html")
             session.clear()
             session.permanent = True
             session["user_id"] = user.id
@@ -158,6 +225,62 @@ def login():
                       message=f"Failed login attempt for username '{username}'")
             flash("Invalid username or password.", "danger")
     return render_template("login.html")
+
+
+@bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if g.get("user"):
+        return redirect(url_for("main.index"))
+    if request.method == "POST":
+        verify_csrf()
+        identifier = request.form.get("identifier", "").strip().lower()
+        user = None
+        if identifier:
+            user = User.query.filter(
+                (User.email == identifier) | (User.username == identifier)
+            ).first()
+        if user and user.is_active and user.email:
+            token = secrets.token_urlsafe(32)
+            user.reset_token_hash = _password_reset_digest(token)
+            user.reset_token_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
+            db.session.commit()
+            reset_url = url_for("main.reset_password", token=token, _external=True)
+            _send_password_reset_email(user, reset_url)
+        flash("If that account exists, a reset link has been sent.", "success")
+        return redirect(url_for("main.login"))
+    return render_template("forgot_password.html", title="Forgot Password")
+
+
+@bp.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token: str):
+    if g.get("user"):
+        return redirect(url_for("main.index"))
+    token_hash = _password_reset_digest(token)
+    user = User.query.filter_by(reset_token_hash=token_hash).first()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not user or not user.reset_token_expires_at or user.reset_token_expires_at < now:
+        flash("That reset link is invalid or has expired.", "danger")
+        return redirect(url_for("main.forgot_password"))
+
+    if request.method == "POST":
+        verify_csrf()
+        password = request.form.get("password", "")
+        password2 = request.form.get("password2", "")
+        if len(password) < 10:
+            flash("Password must be at least 10 characters.", "danger")
+        elif password != password2:
+            flash("Passwords do not match.", "danger")
+        else:
+            user.password_hash = generate_password_hash(password)
+            user.reset_token_hash = None
+            user.reset_token_expires_at = None
+            db.session.commit()
+            log_audit("password_reset", "auth", status="ok", related_record=user.username,
+                      message=f"Password reset completed for '{user.username}'")
+            flash("Password updated. You can sign in now.", "success")
+            return redirect(url_for("main.login"))
+
+    return render_template("reset_password.html", title="Reset Password")
 
 
 @bp.route("/logout", methods=["POST"])
@@ -247,13 +370,14 @@ def signup():
 # ── Tier limit helper ────────────────────────────────────────────────────────
 
 def _tier_guard(model_class):
-    """Flash an error and return True if the org is at its free-tier record limit."""
+    """Flash an error and return True if the org is at its plan record limit."""
     org_id = g.user.org_id if g.user else None
     allowed, current, limit = check_record_limit(model_class, org_id)
     if not allowed:
+        plan = g.user.org.plan_label if g.user and g.user.org else "Current"
+        next_step = "Upgrade to Pro to add more." if plan == "Free" else "Contact the platform owner to raise the limit."
         flash(
-            f"Free plan limit reached ({current}/{limit} records). "
-            "Upgrade to Pro to add more.",
+            f"{plan} plan limit reached ({current}/{limit} records). {next_step}",
             "warning",
         )
     return not allowed
@@ -572,6 +696,8 @@ def settings_integrations_shopify():
         if action == "save":
             shop_domain = normalize_shopify_domain(request.form.get("shop_domain", ""))
             access_token = request.form.get("access_token", "").strip()
+            client_id = request.form.get("client_id", "").strip()
+            client_secret = request.form.get("client_secret", "").strip()
             has_saved_token = bool(cfg.get("access_token"))
             if not shop_domain or (not access_token and not has_saved_token):
                 flash("Shop domain and access token are required.", "danger")
@@ -579,6 +705,10 @@ def settings_integrations_shopify():
                 flash("Invalid shop domain — must end in .myshopify.com (e.g. mystore.myshopify.com).", "danger")
             else:
                 data = {"shop_domain": shop_domain}
+                if client_id:
+                    data["client_id"] = client_id
+                if client_secret:
+                    data["client_secret"] = client_secret
                 if access_token:
                     data["access_token"] = access_token
                 set_integration_config("shopify", data)
@@ -633,11 +763,13 @@ def settings_integrations_shopify():
     logs = get_sync_logs("shopify")
     public_cfg = dict(cfg)
     public_cfg.pop("access_token", None)
+    public_cfg.pop("client_secret", None)
     return render_template(
         "integrations_shopify.html",
         title="Shopify Integration",
         cfg=public_cfg,
         token_saved=bool(cfg.get("access_token")),
+        client_secret_saved=bool(cfg.get("client_secret")),
         api_version=current_app.config.get("SHOPIFY_API_VERSION"),
         public_base_url=current_app.config.get("PUBLIC_BASE_URL", ""),
         logs=logs,
@@ -2359,6 +2491,37 @@ def settings():
     )
 
 
+@bp.route("/settings/billing", methods=["GET", "POST"])
+@admin_required
+def settings_billing():
+    org = db.session.get(Organization, g.user.org_id) if g.user and g.user.org_id else None
+    if not org:
+        flash("No organisation found for your account.", "danger")
+        return redirect(url_for("main.settings"))
+    cfg = get_integration_config("billing")
+    platform_billing = get_platform_integration_config("platform_billing")
+    if request.method == "POST":
+        verify_csrf()
+        data = {
+            "billing_name": request.form.get("billing_name", "").strip(),
+            "billing_email": request.form.get("billing_email", "").strip(),
+            "tax_id": request.form.get("tax_id", "").strip(),
+            "payment_portal_url": request.form.get("payment_portal_url", "").strip(),
+            "billing_notes": request.form.get("billing_notes", "").strip(),
+        }
+        set_integration_config("billing", data)
+        flash("Billing settings saved.", "success")
+        log_audit("billing_settings", "settings", message="Organisation billing settings updated")
+        return redirect(url_for("main.settings_billing"))
+    return render_template(
+        "settings_billing.html",
+        title="Billing Settings",
+        org=org,
+        cfg=cfg,
+        platform_billing=platform_billing,
+    )
+
+
 @bp.route("/settings/board", methods=["GET", "POST"])
 @admin_required
 def settings_board():
@@ -2676,7 +2839,9 @@ def settings_users():
             elif User.query.filter_by(username=username).first():
                 flash(f"Username '{username}' is already taken.", "danger")
             elif not allowed:
-                flash(f"Free plan user limit reached ({current}/{limit}). Upgrade to add more users.", "warning")
+                plan = g.user.org.plan_label if g.user and g.user.org else "Current"
+                next_step = "Upgrade to add more users." if plan == "Free" else "Contact the platform owner to raise the user limit."
+                flash(f"{plan} plan user limit reached ({current}/{limit}). {next_step}", "warning")
             else:
                 user = User(username=username, role=role, org_id=org_id, is_active=True)
                 user.password_hash = generate_password_hash(password)
@@ -2783,17 +2948,31 @@ def settings_brand():
 @super_admin_required
 def platform_admin():
     orgs = Organization.query.order_by(Organization.created_at.desc()).all()
+    users = User.query.order_by(User.created_at.desc()).all()
     total_users = User.query.count()
     total_orgs = Organization.query.count()
     free_orgs = Organization.query.filter_by(plan="free").count()
+    pro_orgs = Organization.query.filter_by(plan="pro").count()
     recent_signups = User.query.order_by(User.created_at.desc()).limit(10).all()
+    platform_billing = get_platform_integration_config("platform_billing")
+    platform_smtp = get_platform_integration_config("platform_smtp")
+    public_platform_smtp = {
+        k: v for k, v in platform_smtp.items()
+        if k not in ("password", "api_key")
+    }
     return render_template(
         "platform_admin.html",
         orgs=orgs,
+        users=users,
         total_users=total_users,
         total_orgs=total_orgs,
         free_orgs=free_orgs,
+        pro_orgs=pro_orgs,
         recent_signups=recent_signups,
+        platform_billing=platform_billing,
+        platform_smtp=public_platform_smtp,
+        platform_password_saved=bool(platform_smtp.get("password")),
+        platform_api_key_saved=bool(platform_smtp.get("api_key")),
     )
 
 
@@ -2825,6 +3004,115 @@ def platform_org_plan(org_id: int):
             flash(f"'{org.name}' plan updated to {new_plan}.", "success")
             log_audit("org_plan_change", "admin", related_record=org.name,
                       message=f"Org '{org.name}' plan changed to '{new_plan}' by super admin")
+    return redirect(url_for("main.platform_admin"))
+
+
+# ── Platform user/account controls ────────────────────────────────────────────
+
+@bp.route("/platform/admin/users/<int:user_id>/toggle", methods=["POST"])
+@super_admin_required
+def platform_user_toggle(user_id: int):
+    verify_csrf()
+    user = db.session.get(User, user_id)
+    if not user:
+        flash("User not found.", "danger")
+    elif user.id == g.user.id:
+        flash("You cannot deactivate your own super admin account.", "danger")
+    else:
+        user.is_active = not user.is_active
+        db.session.commit()
+        state = "activated" if user.is_active else "deactivated"
+        flash(f"User '{user.username}' {state}.", "success")
+        log_audit("platform_user_toggle", "admin", related_record=user.username,
+                  message=f"User '{user.username}' {state} by super admin")
+    return redirect(url_for("main.platform_admin"))
+
+
+@bp.route("/platform/admin/users/<int:user_id>/role", methods=["POST"])
+@super_admin_required
+def platform_user_role(user_id: int):
+    verify_csrf()
+    user = db.session.get(User, user_id)
+    allowed_roles = {"org_admin", "member", "viewer"}
+    new_role = request.form.get("role", "")
+    if not user:
+        flash("User not found.", "danger")
+    elif user.is_super_admin:
+        flash("Super admin roles are not changed from the tenant user table.", "warning")
+    elif new_role not in allowed_roles:
+        flash("Invalid role.", "danger")
+    else:
+        user.role = new_role
+        db.session.commit()
+        flash(f"User '{user.username}' role updated.", "success")
+        log_audit("platform_user_role", "admin", related_record=user.username,
+                  message=f"User '{user.username}' role changed to '{new_role}'")
+    return redirect(url_for("main.platform_admin"))
+
+
+@bp.route("/platform/admin/users/<int:user_id>/password", methods=["POST"])
+@super_admin_required
+def platform_user_password(user_id: int):
+    verify_csrf()
+    user = db.session.get(User, user_id)
+    password = request.form.get("password", "")
+    if not user:
+        flash("User not found.", "danger")
+    elif len(password) < 10:
+        flash("Temporary password must be at least 10 characters.", "danger")
+    else:
+        user.password_hash = generate_password_hash(password)
+        user.reset_token_hash = None
+        user.reset_token_expires_at = None
+        db.session.commit()
+        flash(f"Password updated for '{user.username}'.", "success")
+        log_audit("platform_user_password", "admin", related_record=user.username,
+                  message=f"Password updated for '{user.username}' by super admin")
+    return redirect(url_for("main.platform_admin"))
+
+
+@bp.route("/platform/admin/billing", methods=["POST"])
+@super_admin_required
+def platform_billing_settings():
+    verify_csrf()
+    data = {
+        "pro_price": request.form.get("pro_price", "$5/month").strip() or "$5/month",
+        "pro_payment_url": request.form.get("pro_payment_url", "").strip(),
+        "donation_url": request.form.get("donation_url", "").strip(),
+        "billing_contact_email": request.form.get("billing_contact_email", "").strip(),
+        "provider_note": request.form.get("provider_note", "").strip(),
+    }
+    set_platform_integration_config("platform_billing", data)
+    flash("Platform billing settings saved.", "success")
+    log_audit("platform_billing_settings", "admin", message="Platform billing links updated")
+    return redirect(url_for("main.platform_admin"))
+
+
+@bp.route("/platform/admin/email", methods=["POST"])
+@super_admin_required
+def platform_email_settings():
+    verify_csrf()
+    provider = request.form.get("provider", "smtp").strip().lower()
+    if provider not in ("smtp", "sendgrid", "resend"):
+        provider = "smtp"
+    data = {
+        "provider": provider,
+        "host": request.form.get("host", "").strip(),
+        "port": request.form.get("port", "587").strip() or "587",
+        "username": request.form.get("username", "").strip(),
+        "from_addr": request.form.get("from_addr", "").strip(),
+        "from_name": request.form.get("from_name", "OpsPilot").strip() or "OpsPilot",
+        "use_tls": "true" if request.form.get("use_tls") else "false",
+    }
+    password = request.form.get("password", "").strip()
+    api_key = request.form.get("api_key", "").strip()
+    if password:
+        data["password"] = password
+    if api_key:
+        data["api_key"] = api_key
+    set_platform_integration_config("platform_smtp", data)
+    flash("Platform password-reset email settings saved.", "success")
+    log_audit("platform_email_settings", "admin", message="Platform password-reset email settings updated")
     return redirect(url_for("main.platform_admin"))
 
 

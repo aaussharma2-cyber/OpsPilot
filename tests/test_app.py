@@ -11,6 +11,7 @@ import pytest
 from werkzeug.security import generate_password_hash
 
 from opsdemo import _try_exec, create_app
+from opsdemo import routes as main_routes
 from opsdemo import services
 from opsdemo.models import (
     AlertLog,
@@ -326,13 +327,18 @@ def test_shopify_credentials_do_not_render_saved_token(client):
             "action": "save",
             "shop_domain": "https://demo-store.myshopify.com/admin",
             "access_token": "shpat_secret_token",
+            "client_id": "shopify-client-id",
+            "client_secret": "shopify-client-secret",
         },
         follow_redirects=True,
     )
     html = response.get_data(as_text=True)
     assert "demo-store.myshopify.com" in html
+    assert "shopify-client-id" in html
     assert "shpat_secret_token" not in html
+    assert "shopify-client-secret" not in html
     assert "Leave blank to keep saved token" in html
+    assert "Leave blank to keep saved secret" in html
 
 
 def test_shopify_graphql_sync_mapping(client, app, monkeypatch):
@@ -524,6 +530,48 @@ def test_failed_login_creates_audit_log(client, app):
         assert entry.status == "error"
 
 
+def test_password_reset_flow_updates_password(client, app, monkeypatch):
+    """Forgot-password creates a one-hour token and reset-password updates the hash."""
+    captured = {}
+
+    def fake_send(user, reset_url):
+        captured["url"] = reset_url
+        return True
+
+    monkeypatch.setattr(main_routes, "_send_password_reset_email", fake_send)
+    with app.app_context():
+        user = User.query.filter_by(username="admin").first()
+        user.email = "admin@example.test"
+        db.session.commit()
+
+    forgot_page = client.get("/forgot-password")
+    csrf = extract_csrf(forgot_page.get_data(as_text=True))
+    response = client.post(
+        "/forgot-password",
+        data={"csrf_token": csrf, "identifier": "admin@example.test"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "reset link has been sent" in response.get_data(as_text=True)
+    assert "/reset-password/" in captured["url"]
+
+    token = captured["url"].rsplit("/", 1)[-1]
+    reset_page = client.get(f"/reset-password/{token}")
+    csrf = extract_csrf(reset_page.get_data(as_text=True))
+    response = client.post(
+        f"/reset-password/{token}",
+        data={
+            "csrf_token": csrf,
+            "password": "NewPass12345!",
+            "password2": "NewPass12345!",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Password updated" in response.get_data(as_text=True)
+    login(client, password="NewPass12345!")
+
+
 def test_email_failure_without_smtp_creates_audit_log(client, app):
     """Attempting to send a renewal email with no SMTP config logs an error audit entry."""
     login(client)
@@ -623,6 +671,7 @@ def test_core_module_pages_load(client):
         "/settings/integrations/shopify",
         "/settings/theme",
         "/settings/email",
+        "/settings/billing",
         "/settings/board",
         "/settings/fields",
         "/settings/workflows",
@@ -785,3 +834,60 @@ def test_super_admin_cannot_access_tenant_data_pages(client, app):
     assert b"Platform Administration" in response.data
     assert client.get("/platform/admin").status_code == 200
     assert client.get("/invoices").status_code == 403
+
+
+def test_super_admin_can_manage_platform_users(client, app):
+    """The owner can see all signups and deactivate tenant users from platform admin."""
+    with app.app_context():
+        super_user = User(username="owner", email="owner@example.test", role="super_admin", is_active=True)
+        super_user.password_hash = generate_password_hash("OwnerPass123!")
+        db.session.add(super_user)
+        db.session.commit()
+        tenant_user = User.query.filter_by(username="admin").first()
+        tenant_user_id = tenant_user.id
+
+    response = login(client, username="owner", password="OwnerPass123!", expect_dashboard=False)
+    html = response.get_data(as_text=True)
+    assert "All Users" in html
+    assert "admin" in html
+    csrf = extract_csrf(html)
+
+    response = client.post(
+        f"/platform/admin/users/{tenant_user_id}/role",
+        data={"csrf_token": csrf, "role": "viewer"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        assert db.session.get(User, tenant_user_id).role == "viewer"
+
+    csrf = extract_csrf(response.get_data(as_text=True))
+    client.post(
+        f"/platform/admin/users/{tenant_user_id}/toggle",
+        data={"csrf_token": csrf},
+        follow_redirects=True,
+    )
+    with app.app_context():
+        assert db.session.get(User, tenant_user_id).is_active is False
+
+
+def test_platform_billing_links_are_visible_to_org_admin(client, app):
+    """Platform owner payment/donation links show on org billing without exposing tenant data."""
+    with app.app_context():
+        services.set_platform_integration_config(
+            "platform_billing",
+            {
+                "pro_price": "$5/month",
+                "pro_payment_url": "https://billing.example.test/pro",
+                "donation_url": "https://buymeacoffee.example.test/opspilot",
+                "billing_contact_email": "billing@example.test",
+                "provider_note": "Hosted links only.",
+            },
+        )
+    login(client)
+    response = client.get("/settings/billing")
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "https://billing.example.test/pro" in html
+    assert "https://buymeacoffee.example.test/opspilot" in html
+    assert "billing@example.test" in html

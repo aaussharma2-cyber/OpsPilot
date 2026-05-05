@@ -56,6 +56,24 @@
           Tokens are encrypted at rest and are never rendered back into this page.
         </div>
       </div>
+      <div class="field-row">
+        <label for="client-id">Client ID / API key <span class="subtle">(optional)</span></label>
+        <input id="client-id" name="client_id" type="text"
+               value="{{ cfg.get('client_id', '') }}"
+               placeholder="From Shopify Dev Dashboard">
+        <div class="subtle" style="font-size:0.8rem; margin-top:0.25rem;">
+          Shopify supports client ID and secret for OAuth/token exchange. This app can store them now; direct sync still uses the Admin API access token above.
+        </div>
+      </div>
+      <div class="field-row">
+        <label for="client-secret">Client secret <span class="subtle">(optional)</span></label>
+        <input id="client-secret" name="client_secret" type="password"
+               placeholder="{{ 'Leave blank to keep saved secret' if client_secret_saved else 'Client secret' }}"
+               autocomplete="off">
+        <div class="subtle" style="font-size:0.8rem; margin-top:0.25rem;">
+          {% if client_secret_saved %}A client secret is saved. Enter a new one only when rotating it.{% else %}Optional unless you later enable a full Shopify OAuth install flow.{% endif %}
+        </div>
+      </div>
       <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
         <button class="btn success" type="submit" style="flex:1;">Save credentials</button>
         {% if cfg.get('shop_domain') %}

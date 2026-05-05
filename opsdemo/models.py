@@ -36,8 +36,8 @@ class Organization(db.Model):
     email_from_name = db.Column(db.String(120), nullable=True)  # sender display name for outgoing emails
 
     # Plan limits
-    _PLAN_USER_LIMITS = {"free": 2, "pro": 25, "enterprise": 9999}
-    _PLAN_RECORD_LIMITS = {"free": 5, "pro": 9999, "enterprise": 9999}
+    _PLAN_USER_LIMITS = {"free": 100, "pro": 100, "enterprise": 9999}
+    _PLAN_RECORD_LIMITS = {"free": 5, "pro": 1000, "enterprise": 9999}
 
     @property
     def max_users(self) -> int:
@@ -68,6 +68,8 @@ class User(TimestampMixin, db.Model):
         index=True,
     )
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    reset_token_hash = db.Column(db.String(255), nullable=True, index=True)
+    reset_token_expires_at = db.Column(db.DateTime, nullable=True)
     org = db.relationship("Organization", foreign_keys=[org_id])
 
     @property

@@ -619,7 +619,7 @@ def _classify_shopify_error(exc: Exception) -> str:
     return "Unexpected sync error — check your credentials and try again."
 
 
-_ENCRYPTED_CONFIG_KEYS = {"access_token", "password", "token", "api_key"}
+_ENCRYPTED_CONFIG_KEYS = {"access_token", "password", "token", "api_key", "client_secret"}
 
 
 def _get_fernet():
@@ -669,6 +669,22 @@ def get_integration_config(name: str, org_id: int | None = None) -> dict[str, st
     return result
 
 
+def get_platform_integration_config(name: str) -> dict[str, str]:
+    rows = (
+        IntegrationConfig.query
+        .execution_options(skip_tenant_scope=True)
+        .filter(IntegrationConfig.integration == name, IntegrationConfig.org_id.is_(None))
+        .all()
+    )
+    result = {}
+    for r in rows:
+        if r.key in _ENCRYPTED_CONFIG_KEYS and r.value:
+            result[r.key] = _decrypt_value(r.value)
+        else:
+            result[r.key] = r.value
+    return result
+
+
 def set_integration_config(name: str, data: dict[str, str], org_id: int | None = None) -> None:
     org_id = current_org_id() if org_id is None else org_id
     for key, value in data.items():
@@ -681,6 +697,26 @@ def set_integration_config(name: str, data: dict[str, str], org_id: int | None =
             row.value = stored
         else:
             db.session.add(IntegrationConfig(integration=name, key=key, value=stored, org_id=org_id))
+    db.session.commit()
+
+
+def set_platform_integration_config(name: str, data: dict[str, str]) -> None:
+    for key, value in data.items():
+        stored = _encrypt_value(value) if key in _ENCRYPTED_CONFIG_KEYS and value else value
+        row = (
+            IntegrationConfig.query
+            .execution_options(skip_tenant_scope=True)
+            .filter(
+                IntegrationConfig.integration == name,
+                IntegrationConfig.key == key,
+                IntegrationConfig.org_id.is_(None),
+            )
+            .first()
+        )
+        if row:
+            row.value = stored
+        else:
+            db.session.add(IntegrationConfig(integration=name, key=key, value=stored, org_id=None))
     db.session.commit()
 
 

@@ -3,12 +3,11 @@
 <div class="page-head">
   <div>
     <h1>Platform Administration</h1>
-    <div class="subtle">Manage all organisations and users across the platform.</div>
+    <div class="subtle">Manage organisations, users, billing links, and password reset email.</div>
   </div>
   <span class="badge danger" style="font-size:0.9rem;padding:0.3rem 0.75rem">Super Admin</span>
 </div>
 
-{# ── Metrics ── #}
 <div class="grid metrics" style="margin-bottom:1.5rem">
   <div class="card">
     <div class="subtle">Total Organisations</div>
@@ -19,18 +18,22 @@
     <div class="metric-value" style="color:var(--yellow)">{{ free_orgs }}</div>
   </div>
   <div class="card">
+    <div class="subtle">Pro Plan</div>
+    <div class="metric-value" style="color:var(--green)">{{ pro_orgs }}</div>
+  </div>
+  <div class="card">
     <div class="subtle">Total Users</div>
     <div class="metric-value">{{ total_users }}</div>
   </div>
-  <div class="card">
-    <div class="subtle">Paid Plan</div>
-    <div class="metric-value" style="color:var(--green)">{{ total_orgs - free_orgs }}</div>
-  </div>
 </div>
 
-{# ── Organisations table ── #}
 <section class="panel" style="margin-bottom:1.5rem">
-  <h2 style="margin-top:0">All Organisations</h2>
+  <div class="page-head" style="margin-bottom:0.75rem">
+    <div>
+      <h2 style="margin:0">All Organisations</h2>
+      <div class="subtle">Free: 100 users and 5 records per module. Pro: {{ platform_billing.get('pro_price') or '$5/month' }} and 1,000 records per module.</div>
+    </div>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -66,7 +69,7 @@
             </span>
           </td>
           <td class="subtle">{{ user_count }} / {{ org.max_users }}</td>
-          <td class="subtle" style="font-size:0.82rem">{{ org.created_at.strftime('%d %b %Y') if org.created_at else '—' }}</td>
+          <td class="subtle" style="font-size:0.82rem">{{ org.created_at.strftime('%d %b %Y') if org.created_at else '-' }}</td>
           <td>
             <form method="post" action="{{ url_for('main.platform_org_toggle', org_id=org.id) }}" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -84,8 +87,145 @@
   </div>
 </section>
 
-{# ── Recent signups ── #}
-<section class="panel">
+<section class="panel" style="margin-bottom:1.5rem">
+  <h2 style="margin-top:0">All Users</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Email</th>
+          <th>Organisation</th>
+          <th>Role</th>
+          <th>Status</th>
+          <th>Joined</th>
+          <th>Manage</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+        <tr>
+          <td>
+            <strong>{{ user.username }}</strong>
+            {% if user.id == g.user.id %}<span class="badge info" style="margin-left:0.35rem">You</span>{% endif %}
+          </td>
+          <td class="subtle">{{ user.email or '-' }}</td>
+          <td class="subtle">{{ user.org.name if user.org else 'Platform' }}</td>
+          <td>
+            {% if user.is_super_admin %}
+            <span class="badge danger">{{ user.display_role }}</span>
+            {% else %}
+            <form method="post" action="{{ url_for('main.platform_user_role', user_id=user.id) }}" style="display:inline-flex;gap:0.35rem;align-items:center">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <select name="role" style="padding:0.25rem 0.45rem;font-size:0.82rem;border-radius:6px;border:1px solid var(--line);background:var(--input-bg);color:var(--text)" onchange="this.form.submit()">
+                <option value="org_admin" {% if user.role in ['org_admin','admin'] %}selected{% endif %}>Admin</option>
+                <option value="member" {% if user.role in ['member','manager'] %}selected{% endif %}>Member</option>
+                <option value="viewer" {% if user.role == 'viewer' %}selected{% endif %}>Viewer</option>
+              </select>
+            </form>
+            {% endif %}
+          </td>
+          <td><span class="badge {% if user.is_active %}success{% else %}danger{% endif %}">{{ 'Active' if user.is_active else 'Inactive' }}</span></td>
+          <td class="subtle" style="font-size:0.82rem">{{ user.created_at.strftime('%d %b %Y') if user.created_at else '-' }}</td>
+          <td>
+            <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap">
+              {% if user.id != g.user.id %}
+              <form method="post" action="{{ url_for('main.platform_user_toggle', user_id=user.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn small {% if user.is_active %}warning{% else %}success{% endif %}" type="submit">
+                  {{ 'Deactivate' if user.is_active else 'Activate' }}
+                </button>
+              </form>
+              {% endif %}
+              <details class="col-edit">
+                <summary class="btn small">Password</summary>
+                <div class="col-edit-form" style="min-width:220px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:0.7rem;margin-top:0.4rem">
+                  <form method="post" action="{{ url_for('main.platform_user_password', user_id=user.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label>Temporary password
+                      <input type="password" name="password" autocomplete="new-password" placeholder="min 10 characters" required>
+                    </label>
+                    <button type="submit" class="btn small primary" style="margin-top:0.35rem">Set password</button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="subtle">No users yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">Billing &amp; Donation Links</h2>
+    <form method="post" action="{{ url_for('main.platform_billing_settings') }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Pro price
+        <input type="text" name="pro_price" value="{{ platform_billing.get('pro_price') or '$5/month' }}">
+      </label>
+      <label>Billing contact email
+        <input type="email" name="billing_contact_email" value="{{ platform_billing.get('billing_contact_email', '') }}">
+      </label>
+      <label style="grid-column:1/-1">Pro payment URL
+        <input type="url" name="pro_payment_url" value="{{ platform_billing.get('pro_payment_url', '') }}" placeholder="https://buy.stripe.com/...">
+      </label>
+      <label style="grid-column:1/-1">Donation URL
+        <input type="url" name="donation_url" value="{{ platform_billing.get('donation_url', '') }}" placeholder="https://buymeacoffee.com/...">
+      </label>
+      <label style="grid-column:1/-1">Provider note
+        <textarea name="provider_note" rows="3" placeholder="Stripe, Paddle, PayPal, bank-transfer, or support details">{{ platform_billing.get('provider_note', '') }}</textarea>
+      </label>
+      <button class="btn primary" type="submit">Save billing</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Password Reset Email</h2>
+    <form method="post" action="{{ url_for('main.platform_email_settings') }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Provider
+        <select name="provider">
+          <option value="smtp" {% if platform_smtp.get('provider', 'smtp') == 'smtp' %}selected{% endif %}>SMTP</option>
+          <option value="sendgrid" {% if platform_smtp.get('provider') == 'sendgrid' %}selected{% endif %}>SendGrid</option>
+          <option value="resend" {% if platform_smtp.get('provider') == 'resend' %}selected{% endif %}>Resend</option>
+        </select>
+      </label>
+      <label>From email
+        <input type="email" name="from_addr" value="{{ platform_smtp.get('from_addr', '') }}" placeholder="support@example.com">
+      </label>
+      <label>From name
+        <input type="text" name="from_name" value="{{ platform_smtp.get('from_name', 'OpsPilot') }}">
+      </label>
+      <label>Host
+        <input type="text" name="host" value="{{ platform_smtp.get('host', '') }}" placeholder="smtp.example.com">
+      </label>
+      <label>Port
+        <input type="text" name="port" value="{{ platform_smtp.get('port', '587') }}">
+      </label>
+      <label>Username
+        <input type="text" name="username" value="{{ platform_smtp.get('username', '') }}" autocomplete="off">
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep saved password' if platform_password_saved else 'SMTP password' }}">
+      </label>
+      <label>API key
+        <input type="password" name="api_key" autocomplete="new-password" placeholder="{{ 'Leave blank to keep saved API key' if platform_api_key_saved else 'SendGrid/Resend API key' }}">
+      </label>
+      <label style="align-self:end">
+        <input type="checkbox" name="use_tls" {% if platform_smtp.get('use_tls', 'true') != 'false' %}checked{% endif %}>
+        Use TLS
+      </label>
+      <button class="btn primary" type="submit">Save email</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel" style="margin-top:1.5rem">
   <h2 style="margin-top:0">Recent Signups</h2>
   <div class="table-wrap">
     <table>
@@ -96,10 +236,10 @@
         {% for user in recent_signups %}
         <tr>
           <td><strong>{{ user.username }}</strong></td>
-          <td class="subtle">{{ user.email or '—' }}</td>
+          <td class="subtle">{{ user.email or '-' }}</td>
           <td><span class="badge info">{{ user.display_role }}</span></td>
-          <td class="subtle">{{ user.org.name if user.org else '—' }}</td>
-          <td class="subtle" style="font-size:0.82rem">{{ user.created_at.strftime('%d %b %Y') if user.created_at else '—' }}</td>
+          <td class="subtle">{{ user.org.name if user.org else 'Platform' }}</td>
+          <td class="subtle" style="font-size:0.82rem">{{ user.created_at.strftime('%d %b %Y') if user.created_at else '-' }}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="subtle">No users yet.</td></tr>

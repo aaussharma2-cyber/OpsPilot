@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Billing</h1>
+    <div class="subtle">Plan limits, payment links, and billing contact details for {{ org.name }}.</div>
+  </div>
+  <a href="{{ url_for('main.settings') }}" class="btn small">← Settings</a>
+</div>
+
+<div class="grid metrics" style="margin-bottom:1.5rem">
+  <div class="card">
+    <div class="subtle">Current Plan</div>
+    <div class="metric-value">{{ org.plan_label }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Users Included</div>
+    <div class="metric-value">{{ org.max_users }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Records Per Module</div>
+    <div class="metric-value">{{ org.max_records }}</div>
+  </div>
+  <div class="card">
+    <div class="subtle">Pro Price</div>
+    <div class="metric-value">{{ platform_billing.get('pro_price') or '$5/month' }}</div>
+  </div>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2 style="margin-top:0">Payment options</h2>
+    <div style="display:grid;gap:0.75rem">
+      {% if platform_billing.get('pro_payment_url') %}
+      <a class="btn primary" href="{{ platform_billing.get('pro_payment_url') }}" target="_blank" rel="noopener noreferrer">Upgrade to Pro</a>
+      {% endif %}
+      {% if platform_billing.get('donation_url') %}
+      <a class="btn success" href="{{ platform_billing.get('donation_url') }}" target="_blank" rel="noopener noreferrer">Donate</a>
+      {% endif %}
+      {% if platform_billing.get('billing_contact_email') %}
+      <a class="btn" href="mailto:{{ platform_billing.get('billing_contact_email') }}">Contact billing</a>
+      {% endif %}
+      {% if not platform_billing.get('pro_payment_url') and not platform_billing.get('donation_url') and not platform_billing.get('billing_contact_email') %}
+      <p class="subtle">Payment links are not configured by the platform owner yet.</p>
+      {% endif %}
+      {% if platform_billing.get('provider_note') %}
+      <p class="subtle" style="margin:0">{{ platform_billing.get('provider_note') }}</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Organisation billing profile</h2>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Billing name
+        <input type="text" name="billing_name" value="{{ cfg.get('billing_name', '') }}" placeholder="Company or account name">
+      </label>
+      <label>Billing email
+        <input type="email" name="billing_email" value="{{ cfg.get('billing_email', '') }}" placeholder="billing@example.com">
+      </label>
+      <label>Tax ID
+        <input type="text" name="tax_id" value="{{ cfg.get('tax_id', '') }}" placeholder="ABN, GST, VAT, EIN">
+      </label>
+      <label>Payment portal URL
+        <input type="url" name="payment_portal_url" value="{{ cfg.get('payment_portal_url', '') }}" placeholder="https://billing.example.com/customer">
+      </label>
+      <label style="grid-column:1/-1">Billing notes
+        <textarea name="billing_notes" rows="4" placeholder="Internal billing notes, purchase order preferences, or hosted payment-link notes">{{ cfg.get('billing_notes', '') }}</textarea>
+      </label>
+      <button type="submit" class="btn primary">Save billing profile</button>
+    </form>
+    <p class="subtle" style="font-size:0.82rem;margin-top:0.9rem">Do not store raw card numbers or bank passwords here. Use hosted payment links or payment-provider portals.</p>
+  </section>
+</div>
+{% endblock %}

@@ -32,6 +32,10 @@
         <button type="submit" class="btn primary" style="grid-column:1/-1;justify-content:center;padding:0.7rem">Sign in</button>
       </form>
 
+      <p style="text-align:center;margin:0.75rem 0 0;font-size:0.88rem;color:var(--muted)">
+        <a href="{{ url_for('main.forgot_password') }}">Forgot password?</a>
+      </p>
+
       <p style="text-align:center;margin:1rem 0 0;font-size:0.88rem;color:var(--muted)">
         Don't have an account? <a href="{{ url_for('main.signup') }}">Create workspace</a>
       </p>

@@ -47,6 +47,13 @@
     </span>
   </a>
 
+  <a href="{{ url_for('main.settings_billing') }}" class="card settings-card">
+    <div class="settings-icon">$</div>
+    <h3>Billing</h3>
+    <p>Review plan limits and manage billing contact, portal, and payment-link details.</p>
+    <span class="badge info">{{ g.user.org.plan_label if g.user.org else 'Plan' }}</span>
+  </a>
+
   <a href="{{ url_for('main.sprint_list') }}" class="card settings-card">
     <div class="settings-icon">🏁</div>
     <h3>Sprint Management</h3>

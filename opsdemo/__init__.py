@@ -58,6 +58,9 @@ def _run_migrations(app: Flask) -> None:
         # User model new columns
         _safe_add("ALTER TABLE app_user ADD COLUMN email VARCHAR(120)")
         _safe_add("ALTER TABLE app_user ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
+        _safe_add("ALTER TABLE app_user ADD COLUMN reset_token_hash VARCHAR(255)")
+        _safe_add("ALTER TABLE app_user ADD COLUMN reset_token_expires_at DATETIME")
+        _safe_add("CREATE INDEX IF NOT EXISTS ix_app_user_reset_token_hash ON app_user (reset_token_hash)")
 
         # TaskHistory: changed_by
         _safe_add("ALTER TABLE task_history ADD COLUMN changed_by VARCHAR(80)")
@@ -527,6 +530,11 @@ def create_app(test_config: dict | None = None) -> Flask:
             "main.platform_admin",
             "main.platform_org_toggle",
             "main.platform_org_plan",
+            "main.platform_user_toggle",
+            "main.platform_user_role",
+            "main.platform_user_password",
+            "main.platform_billing_settings",
+            "main.platform_email_settings",
         }
         if g.user.is_super_admin:
             if endpoint not in allowed_for_super_admin:
@@ -737,9 +745,9 @@ def check_record_limit(model_class, org_id) -> tuple[bool, int, int]:
     org = db.session.get(Organization, org_id)
     if not org:
         return True, 0, 9999
-    if org.plan != "free":
-        return True, 0, org.max_records
     current = model_class.query.filter_by(org_id=org_id).count()
+    if org.plan == "enterprise":
+        return True, current, org.max_records
     return current < org.max_records, current, org.max_records
 
 
