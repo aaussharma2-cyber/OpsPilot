@@ -68,6 +68,22 @@ def _run_migrations(app: Flask) -> None:
         # Migrate existing admin role → org_admin
         _safe_add("UPDATE app_user SET role='org_admin' WHERE role='admin'")
 
+        # Promote DEMO_USERNAME to super_admin (platform owner — no org)
+        demo_username = app.config.get("DEMO_USERNAME", "admin")
+        try:
+            conn.execute(
+                db.text(
+                    "UPDATE app_user SET role='super_admin', org_id=NULL "
+                    "WHERE username=:u AND role != 'super_admin'"
+                ).bindparams(u=demo_username)
+            )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
         # Create default organization and assign existing users/data to it
         _ensure_default_org(conn)
         _migrate_tenant_unique_constraints(conn)
@@ -671,15 +687,13 @@ def ensure_default_admin(app: Flask) -> None:
     password = app.config["DEMO_PASSWORD"]
     existing = User.query.filter_by(username=username).first()
     if not existing:
-        # Ensure default org exists
-        org = Organization.query.filter_by(slug="default").first()
-        if not org:
-            org = Organization(name="Default Organisation", slug="default", plan="free")
-            db.session.add(org)
-            db.session.flush()
-        user = User(username=username, role="org_admin", org_id=org.id, is_active=True)
+        user = User(username=username, role="super_admin", org_id=None, is_active=True)
         user.password_hash = generate_password_hash(password)
         db.session.add(user)
+        db.session.commit()
+    elif existing.role != "super_admin":
+        existing.role = "super_admin"
+        existing.org_id = None
         db.session.commit()
 
 
