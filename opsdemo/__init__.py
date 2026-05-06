@@ -636,6 +636,9 @@ def create_app(test_config: dict | None = None) -> Flask:
     from .routes import bp as main_bp
     app.register_blueprint(main_bp)
 
+    from .api import api_bp
+    app.register_blueprint(api_bp)
+
     @app.route("/health")
     def health():
         return {"status": "ok"}
