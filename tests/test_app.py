@@ -39,12 +39,18 @@ def app():
         {
             "TESTING": True,
             "SQLALCHEMY_DATABASE_URI": f"sqlite:///{db_file}",
-            "DEMO_USERNAME": "admin",
-            "DEMO_PASSWORD": "ChangeMe123!",
-            "SECRET_KEY": "test-secret",
+            "DEMO_USERNAME": "owner",
+            "DEMO_PASSWORD": "OwnerPass123!",
+            "SECRET_KEY": "test-secret-long-enough-for-jwt-123456",
             "CREDENTIAL_ENCRYPTION_KEY": "test-credential-key",
         }
     )
+    with app.app_context():
+        org = Organization.query.filter_by(slug="default").first()
+        user = User(username="admin", email="admin@example.test", role="org_admin", org_id=org.id, is_active=True)
+        user.password_hash = generate_password_hash("ChangeMe123!")
+        db.session.add(user)
+        db.session.commit()
     yield app
     with app.app_context():
         db.session.remove()
@@ -410,6 +416,77 @@ def test_shopify_graphql_sync_mapping(client, app, monkeypatch):
         assert Contact.query.filter_by(email="riley@example.test").first().company == "Stone Co"
         assert Sale.query.filter_by(order_ref="#1001").first().quantity == 2
         assert float(Invoice.query.filter_by(reference="SHP-#1001").first().amount) == 42.50
+
+
+def test_android_api_core_endpoints_handle_current_models(client):
+    """Android API endpoints should create/read records using current model fields."""
+    with client.application.app_context():
+        org = Organization.query.filter_by(slug="default").first()
+        user = User(username="apiadmin", email="apiadmin@example.test", role="org_admin", org_id=org.id, is_active=True)
+        user.password_hash = generate_password_hash("ApiPass123!")
+        db.session.add(user)
+        db.session.commit()
+
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": "apiadmin", "password": "ApiPass123!"},
+    )
+    assert login_response.status_code == 200
+    headers = {"Authorization": f"Bearer {login_response.json['token']}"}
+
+    asset = client.post(
+        "/api/assets",
+        json={
+            "name": "Scanner A",
+            "serial_number": "SCAN-001",
+            "owner": "Warehouse",
+            "expiry_date": "2026-12-31",
+        },
+        headers=headers,
+    )
+    assert asset.status_code == 201
+    assert asset.json["serial_number"] == "SCAN-001"
+    assert asset.json["expiry_date"] == "2026-12-31"
+
+    inventory = client.post(
+        "/api/inventory",
+        json={
+            "name": "Label Roll",
+            "sku": "LBL-001",
+            "warehouse": "Main",
+            "qty_on_hand": 4,
+            "reorder_level": 10,
+            "expiry_date": "2027-01-01",
+        },
+        headers=headers,
+    )
+    assert inventory.status_code == 201
+    assert inventory.json["warehouse"] == "Main"
+
+    invoice = client.post(
+        "/api/invoices",
+        json={"reference": "API-INV-1", "party_name": "API Customer", "amount": 10},
+        headers=headers,
+    )
+    assert invoice.status_code == 201
+    assert invoice.json["due_date"]
+
+    renewal = client.post(
+        "/api/renewals",
+        json={"title": "API Renewal", "cost": 20},
+        headers=headers,
+    )
+    assert renewal.status_code == 201
+    assert renewal.json["renew_on"]
+
+    sale = client.post(
+        "/api/sales",
+        json={"order_ref": "API-SO-1", "customer_name": "API Customer", "revenue": 30, "cost": 12},
+        headers=headers,
+    )
+    assert sale.status_code == 201
+    assert sale.json["order_ref"] == "API-SO-1"
+    assert client.get("/api/assets", headers=headers).status_code == 200
 
 
 # ── New feature tests ─────────────────────────────────────────────────────────
@@ -839,14 +916,14 @@ def test_super_admin_cannot_access_tenant_data_pages(client, app):
 def test_super_admin_can_manage_platform_users(client, app):
     """The owner can see all signups and deactivate tenant users from platform admin."""
     with app.app_context():
-        super_user = User(username="owner", email="owner@example.test", role="super_admin", is_active=True)
+        super_user = User(username="owner2", email="owner2@example.test", role="super_admin", is_active=True)
         super_user.password_hash = generate_password_hash("OwnerPass123!")
         db.session.add(super_user)
         db.session.commit()
         tenant_user = User.query.filter_by(username="admin").first()
         tenant_user_id = tenant_user.id
 
-    response = login(client, username="owner", password="OwnerPass123!", expect_dashboard=False)
+    response = login(client, username="owner2", password="OwnerPass123!", expect_dashboard=False)
     html = response.get_data(as_text=True)
     assert "All Users" in html
     assert "admin" in html

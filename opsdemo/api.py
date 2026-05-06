@@ -82,18 +82,19 @@ def _vendor(v: Vendor) -> dict:
 def _asset(a: Asset) -> dict:
     return {
         "id": a.id, "name": a.name, "category": a.category,
-        "serial_no": a.serial_no, "owner": a.owner, "status": a.status,
+        "serial_number": a.serial_number, "owner": a.owner, "status": a.status,
         "purchase_cost": _v(a.purchase_cost), "current_value": _v(a.current_value),
-        "expiry": _v(a.expiry), "notes": a.notes, "created_at": _v(a.created_at),
+        "expiry_date": _v(a.expiry_date), "notes": a.notes, "created_at": _v(a.created_at),
     }
 
 
 def _inventory(i: InventoryItem) -> dict:
     return {
         "id": i.id, "name": i.name, "sku": i.sku,
+        "category": i.category, "warehouse": i.warehouse,
         "qty_on_hand": i.qty_on_hand, "reorder_level": i.reorder_level,
         "unit_cost": _v(i.unit_cost), "sale_price": _v(i.sale_price),
-        "expiry": _v(i.expiry), "notes": i.notes, "created_at": _v(i.created_at),
+        "expiry_date": _v(i.expiry_date), "notes": i.notes, "created_at": _v(i.created_at),
     }
 
 
@@ -122,7 +123,7 @@ def _sale(s: Sale) -> dict:
         "id": s.id, "order_ref": s.order_ref, "customer_name": s.customer_name,
         "order_date": _v(s.order_date), "channel": s.channel,
         "revenue": _v(s.revenue), "cost": _v(s.cost), "quantity": s.quantity,
-        "notes": s.notes, "created_at": _v(s.created_at),
+        "created_at": _v(s.created_at),
     }
 
 
@@ -141,10 +142,11 @@ def _secret() -> str:
 
 
 def _make_token(user_id: int) -> str:
+    now = datetime.datetime.now(datetime.timezone.utc)
     payload = {
-        "sub": user_id,
-        "iat": datetime.datetime.utcnow(),
-        "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
+        "sub": str(user_id),
+        "iat": now,
+        "exp": now + datetime.timedelta(days=30),
     }
     token = _pyjwt.encode(payload, _secret(), algorithm="HS256")
     return token if isinstance(token, str) else token.decode()
@@ -266,7 +268,7 @@ def api_tasks():
         t = Task(
             title=body.get("title") or "New Task",
             description=body.get("description", ""),
-            status=body.get("status", "To Do"),
+            status=body.get("status", "Backlog"),
             priority=body.get("priority", "Medium"),
             owner=body.get("owner", ""),
             sprint_id=body.get("sprint_id") or None,
@@ -388,7 +390,7 @@ def api_vendors():
         v = Vendor(
             name=body.get("name", ""), category=body.get("category", ""),
             contact_name=body.get("contact_name", ""), email=body.get("email", ""),
-            phone=body.get("phone", ""), rating=body.get("rating"),
+            phone=body.get("phone", ""), rating=int(body.get("rating") or 3),
             notes=body.get("notes", ""),
         )
         if body.get("contract_end"):
@@ -427,14 +429,15 @@ def api_assets():
         body = request.get_json(silent=True) or {}
         a = Asset(
             name=body.get("name", ""), category=body.get("category", ""),
-            serial_no=body.get("serial_no", ""), owner=body.get("owner", ""),
+            serial_number=body.get("serial_number") or body.get("serial_no", ""),
+            owner=body.get("owner", ""),
             status=body.get("status", "Active"),
             purchase_cost=body.get("purchase_cost"), current_value=body.get("current_value"),
             notes=body.get("notes", ""),
         )
-        if body.get("expiry"):
+        if body.get("expiry_date") or body.get("expiry"):
             try:
-                a.expiry = datetime.date.fromisoformat(body["expiry"])
+                a.expiry_date = datetime.date.fromisoformat(body.get("expiry_date") or body["expiry"])
             except ValueError:
                 pass
         db.session.add(a)
@@ -452,9 +455,11 @@ def api_asset(aid):
         db.session.commit()
         return "", 204
     body = request.get_json(silent=True) or {}
-    for f in ("name", "category", "serial_no", "owner", "status", "purchase_cost", "current_value", "notes"):
+    for f in ("name", "category", "owner", "status", "purchase_cost", "current_value", "notes"):
         if f in body:
             setattr(a, f, body[f])
+    if "serial_number" in body or "serial_no" in body:
+        a.serial_number = body.get("serial_number") or body.get("serial_no")
     db.session.commit()
     return jsonify(_asset(a))
 
@@ -468,14 +473,16 @@ def api_inventory():
         body = request.get_json(silent=True) or {}
         item = InventoryItem(
             name=body.get("name", ""), sku=body.get("sku", ""),
+            category=body.get("category", ""),
+            warehouse=body.get("warehouse", "Main") or "Main",
             qty_on_hand=int(body.get("qty_on_hand", 0)),
             reorder_level=int(body.get("reorder_level", 0)),
             unit_cost=body.get("unit_cost"), sale_price=body.get("sale_price"),
             notes=body.get("notes", ""),
         )
-        if body.get("expiry"):
+        if body.get("expiry_date") or body.get("expiry"):
             try:
-                item.expiry = datetime.date.fromisoformat(body["expiry"])
+                item.expiry_date = datetime.date.fromisoformat(body.get("expiry_date") or body["expiry"])
             except ValueError:
                 pass
         db.session.add(item)
@@ -515,6 +522,7 @@ def api_invoices():
             reference=body.get("reference", ""), kind=body.get("kind", "sales"),
             party_name=body.get("party_name", ""), amount=body.get("amount", 0),
             status=body.get("status", "Draft"), notes=body.get("notes", ""),
+            due_date=datetime.date.today(),
         )
         if body.get("due_date"):
             try:
@@ -560,6 +568,7 @@ def api_renewals():
             contact_name=body.get("contact_name", ""),
             contact_email=body.get("contact_email", ""),
             notes=body.get("notes", ""),
+            renew_on=datetime.date.today(),
         )
         if body.get("renew_on"):
             try:
@@ -604,7 +613,6 @@ def api_sales():
             order_ref=body.get("order_ref", ""), customer_name=body.get("customer_name", ""),
             channel=body.get("channel", ""), revenue=body.get("revenue", 0),
             cost=body.get("cost", 0), quantity=int(body.get("quantity", 1)),
-            notes=body.get("notes", ""),
         )
         if body.get("order_date"):
             try:

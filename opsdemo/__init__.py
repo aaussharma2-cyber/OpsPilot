@@ -536,6 +536,25 @@ def create_app(test_config: dict | None = None) -> Flask:
         if g.user is None:
             return
         if g.user.is_super_admin:
+            allowed_for_super_admin = {
+                "health",
+                "static",
+                "main.index",
+                "main.login",
+                "main.signup",
+                "main.logout",
+                "main.platform_admin",
+                "main.platform_org_toggle",
+                "main.platform_org_plan",
+                "main.platform_user_toggle",
+                "main.platform_user_role",
+                "main.platform_user_password",
+                "main.platform_billing_settings",
+                "main.platform_email_settings",
+            }
+            endpoint = request.endpoint or ""
+            if endpoint not in allowed_for_super_admin:
+                abort(403)
             return
         endpoint = request.endpoint or ""
         if endpoint.startswith("main.") and not g.user.org_id:
